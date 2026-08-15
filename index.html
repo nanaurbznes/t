@@ -1,0 +1,588 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>Options-G</title>
+<style>
+  :root {
+    --bg: #000;
+    --panel: #07090a;
+    --border: #34383c;
+    --text: #c4c3c3;
+    --muted: #646464;
+    --blue: #047ebb;
+    --green: #049f3d;
+    --red: #c9040a;
+    --row: #16191b;
+    --zoom-scale: 1;
+  }
+
+  * { box-sizing: border-box; }
+
+  html {
+    background: var(--bg);
+  }
+
+  body {
+    margin: 0;
+    min-height: 100vh;
+    background: var(--bg);
+    color: var(--text);
+    font-family: Arial, Helvetica, sans-serif;
+    padding: 24px 20px 18px;
+  }
+
+  .page-frame {
+    width: min(1280px, 100%);
+    margin: 0 auto;
+    position: relative;
+  }
+
+
+
+  .app {
+    width: 100%;
+    margin: 0 auto;
+  }
+
+  .inputs {
+    display: grid;
+    grid-template-columns: repeat(3, minmax(0, 220px));
+    justify-content: center;
+    gap: 36px;
+    margin: 0 auto 20px;
+  }
+
+  .input-group { text-align: center; }
+
+  label {
+    display: block;
+    font-size: 15px;
+    margin-bottom: 8px;
+    letter-spacing: .3px;
+  }
+
+  input {
+    width: 100%;
+    height: 58px;
+    border: 1px solid #4b4e52;
+    border-radius: 13px;
+    background: #010101;
+    color: white;
+    text-align: center;
+    font-size: 32px;
+    outline: none;
+    padding: 0 10px;
+  }
+
+  input:focus { border-color: #8b8f93; }
+
+
+  .panel {
+    border: 1px solid var(--border);
+    border-radius: 14px;
+    background: var(--panel);
+    overflow: hidden;
+  }
+
+  .summary {
+    display: grid;
+    grid-template-columns: repeat(4, 1fr);
+    margin-bottom: 16px;
+  }
+
+  .metric {
+    min-height: 135px;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    position: relative;
+    gap: 4px;
+  }
+
+  .metric + .metric { border-left: 1px solid #45494d; }
+
+  .metric-title {
+    font-size: 18px;
+    color: #9f9f9f;
+    margin-bottom: 10px;
+    letter-spacing: .5px;
+  }
+
+  .metric-content {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+  }
+
+  .metric-value {
+    font-size: 38px;
+    line-height: 1;
+    font-weight: 500;
+  }
+
+  .metric-value.red { color: var(--red); }
+  .metric-value.green { color: var(--green); }
+
+  .icon {
+    font-size: 22px;
+    line-height: 1;
+    margin-top: 0;
+    width: 33px;
+    height: 33px;
+    border: 2px solid currentColor;
+    border-radius: 30%;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    background: none;
+    padding: 0;
+  }
+
+  .blue { color: var(--blue); }
+  .red { color: var(--red); }
+  .green { color: var(--green); }
+
+  /* ---------- main content / table toggle ---------- */
+  .main-layout {
+    display: grid;
+    grid-template-columns: minmax(0, 1.18fr) minmax(460px, .92fr);
+    gap: 14px;
+    align-items: start;
+  }
+
+  .chart-panel {
+    padding: 22px 22px 17px;
+    margin: 0;
+    min-width: 0;
+  }
+
+  .chart {
+    display: grid;
+    grid-template-columns: 105px minmax(0, 1fr);
+    grid-template-rows: 1fr 1fr;
+    min-height: 330px;
+    position: relative;
+  }
+
+  .chart-label {
+    display: flex;
+    align-items: center;
+    justify-content: flex-end;
+    padding-right: 17px;
+    font-size: 17px;
+    gap: 10px;
+    white-space: nowrap;
+  }
+
+  .dot {
+    width: 9px;
+    height: 9px;
+    border-radius: 50%;
+    flex: 0 0 auto;
+  }
+
+  .dot.red { background: var(--red); }
+  .dot.green { background: var(--green); }
+
+  .plot {
+    grid-row: 1 / 3;
+    grid-column: 2;
+    position: relative;
+    border-left: 2px solid #eee;
+    background-image: repeating-linear-gradient(
+      to right,
+      transparent 0,
+      transparent calc(25% - 1px),
+      #3b3e42 calc(25% - 1px),
+      #3b3e42 25%
+    );
+  }
+
+  .bar {
+    position: absolute;
+    left: 0;
+    height: 52px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    color: #000;
+    font-size: 21px;
+    font-weight: 500;
+    min-width: 70px;
+    transition: width .15s ease;
+  }
+
+  .bar.loss { top: 60px; background: #e30918; }
+  .bar.profit { top: 223px; background: #10ad48; }
+
+  .scale {
+    position: absolute;
+    left: -2px;
+    right: 0;
+    bottom: -25px;
+    height: 24px;
+    display: flex;
+    justify-content: space-between;
+    color: #aaa;
+    font-size: 13px;
+  }
+
+  .table-column {
+    min-width: 0;
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+  }
+
+
+
+  .table-wrap {
+    overflow-x: auto;
+    min-width: 0;
+  }
+
+  table {
+    width: 100%;
+    border-collapse: collapse;
+    table-layout: fixed;
+    min-width: 0;
+  }
+
+  th, td {
+    border-right: 1px solid #45494d;
+    border-bottom: 1px solid #45494d;
+    text-align: center;
+    height: 45px;
+    font-size: 14px;
+    white-space: nowrap;
+  }
+
+  th:last-child, td:last-child { border-right: 0; }
+  tr:last-child td { border-bottom: 0; }
+
+  th {
+    height: 52px;
+    font-weight: 400;
+    color: var(--blue);
+  }
+
+  th:nth-child(4), td:nth-child(4) { color: var(--green); }
+  th:nth-child(5), td:nth-child(5) { color: var(--red); }
+  td { color: white; }
+  tbody tr:nth-child(even) { background: var(--row); }
+
+  .th-icon {
+    display: inline-grid;
+    place-items: center;
+    width: 25px;
+    height: 25px;
+    border: 1px solid currentColor;
+    border-radius: 50%;
+    margin-right: 5px;
+    vertical-align: middle;
+    font-size: 13px;
+  }
+
+
+
+  /* ---------- footer ---------- */
+  .footer {
+    text-align: center;
+    color: #666;
+    font-size: 16px;
+    letter-spacing: 2px;
+    margin-top: 20px;
+  }
+
+  /* ---------- responsive ---------- */
+  @media (max-width: 980px) {
+    body { padding: 18px 12px; }
+
+    .inputs {
+      padding-right: 0;
+      grid-template-columns: repeat(3, minmax(0, 180px));
+      gap: 18px;
+    }
+
+    .main-layout {
+      grid-template-columns: 1fr;
+    }
+  }
+
+  @media (max-width: 700px) {
+    .inputs {
+      grid-template-columns: repeat(3, minmax(0, 1fr));
+      gap: 10px;
+    }
+
+    label { font-size: 13px; }
+    input { height: 52px; font-size: 27px; }
+
+    .summary { grid-template-columns: repeat(2, 1fr); }
+
+    .metric {
+      min-height: 115px;
+    }
+
+    .metric:nth-child(3) {
+      border-left: 0;
+      border-top: 1px solid #45494d;
+    }
+
+    .metric:nth-child(4) {
+      border-top: 1px solid #45494d;
+    }
+
+    .metric-value { font-size: 32px; }
+    .chart { grid-template-columns: 85px minmax(0, 1fr); }
+    .chart-label { font-size: 13px; padding-right: 10px; }
+    th, td { font-size: 12px; }
+    .th-icon { width: 22px; height: 22px; font-size: 12px; margin-right: 3px; }
+  }
+
+  @media (max-width: 500px) {
+    .inputs { grid-template-columns: 1fr; max-width: 250px; }
+    .summary { grid-template-columns: 1fr; }
+
+    .metric + .metric {
+      border-left: 0;
+      border-top: 1px solid #45494d;
+    }
+
+    .chart {
+      grid-template-columns: 72px minmax(0, 1fr);
+      min-height: 225px;
+    }
+
+    .chart-label { font-size: 11px; }
+    .bar { font-size: 17px; height: 46px; }
+    .bar.loss { top: 29px; }
+    .bar.profit { top: 113px; }
+  }
+</style>
+</head>
+<body>
+<div class="page-frame">
+  <div class="zoom-stage">
+    <main class="app">
+
+    <section class="inputs">
+      <div class="input-group">
+        <label for="total">Total $</label>
+        <input id="total" inputmode="decimal" value="1000" />
+      </div>
+      <div class="input-group">
+        <label for="limit">Limit $</label>
+        <input id="limit" inputmode="decimal" value="-3.33" aria-label="Limit dollar value" />
+      </div>
+      <div class="input-group">
+        <label for="ptPct">PROFIT TAKER %</label>
+        <input id="ptPct" inputmode="decimal" value="80" />
+      </div>
+    </section>
+
+    <section class="panel summary">
+      <div class="metric">
+        <div class="metric-title">RATIO</div>
+        <div class="metric-content">
+          <div id="ratio" class="metric-value">51.7%</div>
+          <div class="icon blue">%</div>
+        </div>
+      </div>
+      <div class="metric">
+        <div class="metric-title">MAX LOSS</div>
+        <div class="metric-content">
+          <div id="maxLoss" class="metric-value red">$989</div>
+          <div class="icon red">↓</div>
+        </div>
+      </div>
+      <div class="metric">
+        <div class="metric-title">MAX PROFIT</div>
+        <div class="metric-content">
+          <div id="maxProfit" class="metric-value green">$511</div>
+          <div class="icon green">↑</div>
+        </div>
+      </div>
+      <div class="metric">
+        <div class="metric-title">PROFIT TAKER</div>
+        <div class="metric-content">
+          <div id="profitTaker" class="metric-value">-1.02</div>
+          <div class="icon blue">💰</div>
+        </div>
+      </div>
+    </section>
+
+    <section id="mainLayout" class="main-layout">
+      <section class="panel chart-panel">
+        <div class="chart">
+          <div class="chart-label"><span>Max Loss</span><span class="dot red"></span></div>
+          <div class="chart-label"><span>Max Profit</span><span class="dot green"></span></div>
+          <div class="plot">
+            <div id="lossBar" class="bar loss">$989</div>
+            <div id="profitBar" class="bar profit">$511</div>
+            <div id="scale" class="scale"></div>
+          </div>
+        </div>
+      </section>
+
+      <section class="table-column">
+        <section class="panel table-wrap">
+          <table>
+            <thead>
+              <tr>
+                <th><span> Ratio</th>
+                <th></span> Limit</th>
+                <th></span> PT</th>
+                <th></span> Profit</th>
+                <th></span> Loss</th>
+              </tr>
+            </thead>
+            <tbody id="rows"></tbody>
+          </table>
+        </section>
+      </section>
+    </section>
+
+    <div class="footer">Spread Options - GolaN</div>
+    </main>
+  </div>
+</div>
+
+<script>
+  const totalEl = document.getElementById('total');
+  const limitEl = document.getElementById('limit');
+  const ptPctEl = document.getElementById('ptPct');
+
+  function number(v, fallback) {
+    const n = parseFloat(String(v).replace(/[$,%\s,]/g, ''));
+    return Number.isFinite(n) ? n : fallback;
+  }
+
+  function money0(n) {
+    return '$' + Math.round(n).toLocaleString('en-US');
+  }
+
+  function signed2(n) {
+    return (n < 0 ? '-$' : '$') + Math.abs(n).toFixed(2);
+  }
+
+  function getLimitValue() {
+    const raw = String(limitEl.value);
+    const magnitudeText = raw.replace(/[^0-9.]/g, '');
+    let n = parseFloat(magnitudeText);
+
+    if (!Number.isFinite(n) || n === 0) n = 0.01;
+    return -Math.abs(n);
+  }
+
+  function normalizeLimitOnBlur() {
+    const n = getLimitValue();
+    limitEl.value = n.toFixed(2);
+    return n;
+  }
+
+  function calculate() {
+    const total = Math.max(0.01, Math.abs(number(totalEl.value, 1500)));
+    const limit = getLimitValue();
+    const ptPct = Math.min(100, Math.max(0, number(ptPctEl.value, 80)));
+
+    totalEl.value = String(total);
+    ptPctEl.value = String(ptPct);
+
+    // max profit = abs(limit) * 100
+    // max loss = total - max profit
+    // ratio = max profit / max loss
+    const maxProfit = Math.abs(limit) * 100;
+    const maxLoss = Math.max(0, total - maxProfit);
+    const ratio = maxLoss > 0 ? (maxProfit / maxLoss) * 100 : 0;
+    const profitTaker = limit * (1 - ptPct / 100);
+
+    document.getElementById('ratio').textContent = Math.round(ratio);
+    document.getElementById('maxProfit').textContent = money0(maxProfit);
+    document.getElementById('maxLoss').textContent = money0(maxLoss);
+    document.getElementById('profitTaker').textContent = profitTaker.toFixed(2);
+
+    renderChart(maxLoss, maxProfit);
+    renderTable(total, ptPct);
+  }
+
+  function renderChart(loss, profit) {
+    const max = Math.max(loss, profit, 1);
+    const ceiling = Math.ceil(max / 200) * 200 || 200;
+    const lossBar = document.getElementById('lossBar');
+    const profitBar = document.getElementById('profitBar');
+
+    lossBar.style.width = Math.max(10, loss / ceiling * 100) + '%';
+    profitBar.style.width = Math.max(10, profit / ceiling * 100) + '%';
+    lossBar.textContent = money0(loss);
+    profitBar.textContent = money0(profit);
+
+    const step = ceiling / 4;
+    const scale = document.getElementById('scale');
+    scale.innerHTML = [0, 1, 2, 3, 4]
+      .map(i => `<span>${Math.round(step * i).toLocaleString('en-US')}</span>`)
+      .join('');
+  }
+
+  function renderTable(total, ptPct) {
+    const tbody = document.getElementById('rows');
+    const ratios = [50, 55, 60, 65, 70, 75, 80];
+
+    tbody.innerHTML = ratios.map(r => {
+      const profit = total * (r / (100 + r));
+      const loss = total - profit;
+      const limit = -(profit / 100);
+      const pt = limit * (1 - ptPct / 100);
+
+      return `<tr>
+        <td>${r}%</td>
+        <td>${limit.toFixed(2)}</td>
+        <td>${signed2(pt)}</td>
+        <td>${money0(profit)}</td>
+        <td>${money0(loss)}</td>
+      </tr>`;
+    }).join('');
+  }
+
+  function storageGet(key) {
+    try { return localStorage.getItem(key); } catch (_) { return null; }
+  }
+
+  function storageSet(key, value) {
+    try { localStorage.setItem(key, value); } catch (_) {}
+  }
+
+  /* ---------- calculator inputs ---------- */
+  [totalEl, ptPctEl].forEach(el => {
+    el.addEventListener('input', calculate);
+    el.addEventListener('change', calculate);
+    el.addEventListener('blur', calculate);
+  });
+
+  limitEl.addEventListener('input', calculate);
+
+  limitEl.addEventListener('blur', () => {
+    normalizeLimitOnBlur();
+    calculate();
+  });
+
+  limitEl.addEventListener('change', () => {
+    normalizeLimitOnBlur();
+    calculate();
+  });
+
+  limitEl.addEventListener('keydown', e => {
+    if (e.key === 'Enter') {
+      normalizeLimitOnBlur();
+      calculate();
+      limitEl.blur();
+    }
+  });
+
+  calculate();
+</script>
+</body>
+</html>
