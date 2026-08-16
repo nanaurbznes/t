@@ -32,7 +32,7 @@
     font-family: Arial, Helvetica, sans-serif;
     padding: 24px 20px 18px;
   }
-
+  input::placeholder { color: var(--muted); font-size: 20px; }
   .page-frame {
     width: min(1280px, 100%);
     margin: 0 auto;
@@ -75,6 +75,8 @@
     outline: none;
     padding: 0 10px;
   }
+
+  input::placeholder { color: var(--muted); font-size: 24px; }
 
   input:focus { border-color: #8b8f93; }
 
@@ -372,7 +374,7 @@
     <section class="inputs">
       <div class="input-group">
         <label for="total">Total $</label>
-        <input id="total" inputmode="decimal" value="1000" />
+        <input id="total" inputmode="decimal" value="1000" placeholder="Missing Value" />
       </div>
       <div class="input-group">
         <label for="limit">Limit $</label>
@@ -380,7 +382,7 @@
       </div>
       <div class="input-group">
         <label for="ptPct">PROFIT TAKER %</label>
-        <input id="ptPct" inputmode="decimal" value="80" />
+        <input id="ptPct" inputmode="decimal" value="80" placeholder="%" />
       </div>
     </section>
 
@@ -433,11 +435,11 @@
           <table>
             <thead>
               <tr>
-                <th><span> Ratio</th>
-                <th></span> Limit</th>
-                <th></span> PT</th>
-                <th></span> Profit</th>
-                <th></span> Loss</th>
+                <th>Ratio</th>
+                <th>Limit</th>
+                <th id="ptHeader">PT</th>
+                <th>Profit</th>
+                <th>Loss</th>
               </tr>
             </thead>
             <tbody id="rows"></tbody>
@@ -485,12 +487,52 @@
   }
 
   function calculate() {
-    const total = Math.max(0.01, Math.abs(number(totalEl.value, 1500)));
-    const limit = getLimitValue();
-    const ptPct = Math.min(100, Math.max(0, number(ptPctEl.value, 80)));
+    const rawTotal = String(totalEl.value || '').trim();
+    // If the user cleared the field, don't overwrite while they edit.
+    // Show a placeholder instead (styled as small grey text).
+    let total;
+    if (rawTotal === '') {
+      total = 0.01; // use minimal internal value for calculations
+    } else {
+      const parsed = parseFloat(rawTotal.replace(/[$,%\s,]/g, ''));
+      if (Number.isFinite(parsed)) {
+        total = Math.max(0.01, Math.abs(parsed));
+        totalEl.value = String(total);
+      } else {
+        // User is mid-edit (e.g. just typed '-' or '.') — don't overwrite.
+        total = 0.01;
+      }
+    }
 
-    totalEl.value = String(total);
-    ptPctEl.value = String(ptPct);
+    const limit = getLimitValue();
+
+    // Profit taker percent: don't overwrite while user is editing.
+    const rawPt = String(ptPctEl.value || '').trim();
+    let ptPct;
+    if (rawPt === '') {
+      // empty while editing -> use internal default for calculations
+      ptPct = 80;
+    } else {
+      const parsedPt = parseFloat(rawPt.replace(/[$,%\s,]/g, ''));
+      if (Number.isFinite(parsedPt)) {
+        ptPct = Math.min(100, Math.max(0, parsedPt));
+        ptPctEl.value = String(ptPct);
+      } else {
+        // mid-edit non-numeric (e.g. '-') -> don't overwrite
+        ptPct = 80;
+      }
+    }
+
+    // Update PT column header to include the percentage when available
+    const ptHeader = document.getElementById('ptHeader');
+    if (ptHeader) {
+      const parsedForHeader = parseFloat(rawPt.replace(/[$,%\s,]/g, ''));
+      if (rawPt === '' || !Number.isFinite(parsedForHeader)) {
+        ptHeader.textContent = 'PT (%)';
+      } else {
+        ptHeader.textContent = `PT (${Math.round(parsedForHeader)}%)`;
+      }
+    }
 
     // max profit = abs(limit) * 100
     // max loss = total - max profit
@@ -556,10 +598,21 @@
   }
 
   /* ---------- calculator inputs ---------- */
-  [totalEl, ptPctEl].forEach(el => {
-    el.addEventListener('input', calculate);
-    el.addEventListener('change', calculate);
-    el.addEventListener('blur', calculate);
+  // total input: update while editing
+  totalEl.addEventListener('input', calculate);
+  totalEl.addEventListener('change', calculate);
+  totalEl.addEventListener('blur', calculate);
+
+  // profit taker: update while editing, but only apply fallback on blur
+  ptPctEl.addEventListener('input', calculate);
+  ptPctEl.addEventListener('change', calculate);
+  ptPctEl.addEventListener('blur', () => {
+    const raw = String(ptPctEl.value || '').trim();
+    const parsed = parseFloat(raw.replace(/[$,%\s,]/g, ''));
+    if (raw === '' || !Number.isFinite(parsed)) {
+      ptPctEl.value = '80';
+    }
+    calculate();
   });
 
   limitEl.addEventListener('input', calculate);
