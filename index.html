@@ -1653,7 +1653,28 @@
 
   const SYNC_TOOLTIP_SIGNED_OUT = 'Sign in with Google to sync your portfolio via Drive';
 
-  function initGoogleSync() {
+  // GIS never hands client-side JS a refresh token (security), so there is
+  // nothing to persist across a reload except "the user was signed in" --
+  // stored here as a flag. On load, if that flag is set, silently re-request
+  // a token (prompt:'') leaning on the still-alive Google session cookie in
+  // the browser; no popup, no re-consent, just picks the session back up.
+  // If that silent request fails (session actually gone), we fall back to
+  // showing the normal "sign in" state -- no error shown, no nagging.
+  const SYNC_REMEMBER_KEY = 'optionsPortfolioGoogleSyncEnabled';
+
+  // localStorage can throw (private browsing, strict cookie/storage
+  // settings, sandboxed iframes) -- never let that break sign-in itself.
+  function readSyncRemember() {
+    try { return localStorage.getItem(SYNC_REMEMBER_KEY) === '1'; } catch (err) { return false; }
+  }
+  function writeSyncRemember() {
+    try { localStorage.setItem(SYNC_REMEMBER_KEY, '1'); } catch (err) { /* ignore */ }
+  }
+  function clearSyncRemember() {
+    try { localStorage.removeItem(SYNC_REMEMBER_KEY); } catch (err) { /* ignore */ }
+  }
+
+  async function initGoogleSync() {
     if (!syncConfigured()) {
       setSyncButton('🔗',
         'Google Sync not configured — add your OAuth Web Client ID to GOOGLE_CLIENT_ID in this file to enable it.');
@@ -1669,6 +1690,16 @@
       callback: () => {},
     });
     setSyncButton('🔗', SYNC_TOOLTIP_SIGNED_OUT);
+
+    if (readSyncRemember()) {
+      setSyncButton('⏳', 'Reconnecting…');
+      try {
+        await requestGoogleToken('');
+        await afterSignIn();
+      } catch (err) {
+        setSyncButton('🔗', SYNC_TOOLTIP_SIGNED_OUT);
+      }
+    }
   }
 
   function requestGoogleToken(promptMode) {
@@ -1704,6 +1735,7 @@
     gAccessToken = null;
     gDriveFileId = null;
     gUserEmail = null;
+    clearSyncRemember();
     setSyncButton('🔗', SYNC_TOOLTIP_SIGNED_OUT);
   }
 
@@ -1716,6 +1748,7 @@
     } catch (err) {
       gUserEmail = 'Google account';
     }
+    writeSyncRemember();
     await pullFromDrive();
   }
 
