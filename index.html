@@ -1326,7 +1326,7 @@
   function dealCardHtml(deal) {
     const m = computeMetrics(deal.total, deal.limit, deal.ptPct);
     const badge = deal.closed
-      ? `<span class="badge badge-closed">CLOSED</span>`
+      ? `<span class="badge badge-closed">CLOSED</span> <button type="button" class="icon-edit-btn" onclick="reopenDeal('${deal.id}')" title="Reopen this deal">&#8634;</button>`
       : `<span class="badge badge-open">OPEN</span>`;
     const tickerHtml = deal.ticker ? `<span class="deal-ticker">${escapeHtml(deal.ticker)}</span>` : '';
     const titleHtml = `<span class="deal-title-text">${escapeHtml(deal.name)}</span>`;
@@ -1582,6 +1582,19 @@
     pushToDriveDebounced();
   }
 
+  // Flips a closed deal back to OPEN. close_date/close_pt_pct are left in
+  // place (not cleared) so if it gets closed again, "Update Close" still
+  // has last time's values to prefill from -- only the `closed` flag itself
+  // reverts, switching the card back to the target-PT metrics/actions.
+  function reopenDeal(id) {
+    const deal = deals.find(d => d.id === id);
+    if (!deal) return;
+    deal.closed = false;
+    deal.updatedTs = Date.now();
+    renderPortfolio();
+    pushToDriveDebounced();
+  }
+
   /* ---------- import / export ---------- */
   function exportDeals() {
     const blob = new Blob([JSON.stringify({ version: 1, exportedAt: new Date().toISOString(), deals }, null, 2)], { type: 'application/json' });
@@ -1664,18 +1677,24 @@
 
   const SYNC_TOOLTIP_SIGNED_OUT = 'Sign in with Google to sync your portfolio via Drive';
 
-  // GIS never hands client-side JS a refresh token (security), so there is
-  // nothing to persist across a reload except "the user was signed in" --
-  // stored here as a flag. IMPORTANT: do NOT use this to auto-call
-  // requestAccessToken() on page load. That call opens a popup, and
-  // browsers (Firefox in particular) block popups that aren't triggered by
-  // a direct user click -- when blocked, the promise never resolves *or*
-  // rejects, so an awaited call just hangs forever, leaving the button
-  // stuck and sign-in never actually completing. Real fix: on load, just
-  // show a "click to reconnect" state:one click, a normal (non-silent,
-  // therefore never blocked) requestAccessToken() call, done -- usually
-  // near-instant since consent was already granted last time.
+  // GIS never hands client-side JS a refresh token (security) -- BUT the
+  // access token it does hand back is good for ~1hr (see expires_in), and
+  // there's nothing stopping us from storing THAT and reusing it directly
+  // on the next page load, with zero API calls and zero risk of a blocked
+  // popup, until it's actually about to expire. That's what makes a reload
+  // feel like "stays connected" for realistic usage -- a click is only
+  // needed again after the token has sat completely unused for ~55min.
+  //
+  // IMPORTANT: never call requestAccessToken() automatically (e.g. on page
+  // `load`, or any other non-click code path). That call opens a popup, and
+  // browsers (Firefox in particular) block popups not triggered by a direct
+  // user click -- and a blocked call's promise never resolves *or* rejects,
+  // so an awaited call just hangs forever, leaving the button stuck and
+  // sign-in never actually completing. This bit the HTML build once
+  // already; don't reintroduce it.
   const SYNC_REMEMBER_KEY = 'optionsPortfolioGoogleSyncEnabled';
+  const SYNC_TOKEN_KEY = 'optionsPortfolioGoogleSyncToken';
+  const TOKEN_EXPIRY_SAFETY_MS = 60 * 1000; // treat a token as expired 60s early
 
   // localStorage can throw (private browsing, strict cookie/storage
   // settings, sandboxed iframes) -- never let that break sign-in itself.
@@ -1688,8 +1707,49 @@
   function clearSyncRemember() {
     try { localStorage.removeItem(SYNC_REMEMBER_KEY); } catch (err) { /* ignore */ }
   }
+  function readStoredToken() {
+    try {
+      const raw = JSON.parse(localStorage.getItem(SYNC_TOKEN_KEY) || 'null');
+      return (raw && raw.accessToken && raw.expiresAt) ? raw : null;
+    } catch (err) { return null; }
+  }
+  function writeStoredToken(accessToken, expiresInSeconds) {
+    try {
+      const expiresAt = Date.now() + (Number(expiresInSeconds) || 3300) * 1000;
+      localStorage.setItem(SYNC_TOKEN_KEY, JSON.stringify({ accessToken, expiresAt }));
+    } catch (err) { /* ignore */ }
+  }
+  function clearStoredToken() {
+    try { localStorage.removeItem(SYNC_TOKEN_KEY); } catch (err) { /* ignore */ }
+  }
 
-  function initGoogleSync() {
+  // Reuses a still-valid stored access token with NO API call, NO popup --
+  // just picks the prior session back up. Verifies the token still actually
+  // works (it could have been revoked server-side despite not being
+  // expired) before committing to it; falls back cleanly otherwise.
+  async function tryResumeStoredToken() {
+    const stored = readStoredToken();
+    if (!stored || stored.expiresAt - TOKEN_EXPIRY_SAFETY_MS <= Date.now()) return false;
+    gAccessToken = stored.accessToken;
+    setSyncButton('⏳', 'Reconnecting…');
+    try {
+      const res = await fetch('https://www.googleapis.com/oauth2/v3/userinfo', {
+        headers: { Authorization: 'Bearer ' + gAccessToken }
+      });
+      if (!res.ok) throw new Error('stored token no longer valid');
+      const info = await res.json();
+      gUserEmail = info.email || 'Google account';
+      writeSyncRemember();
+      await pullFromDrive();
+      return true;
+    } catch (err) {
+      gAccessToken = null;
+      clearStoredToken();
+      return false;
+    }
+  }
+
+  async function initGoogleSync() {
     if (!syncConfigured()) {
       setSyncButton('🔗',
         'Google Sync not configured — add your OAuth Web Client ID to GOOGLE_CLIENT_ID in this file to enable it.');
@@ -1704,10 +1764,14 @@
       scope: DRIVE_SCOPE,
       callback: () => {},
     });
-    if (readSyncRemember()) {
-      setSyncButton('🔄', 'You were signed in before — click to reconnect.');
-    } else {
-      setSyncButton('🔗', SYNC_TOOLTIP_SIGNED_OUT);
+
+    const resumed = await tryResumeStoredToken();
+    if (!resumed) {
+      if (readSyncRemember()) {
+        setSyncButton('🔄', 'You were signed in before — click to reconnect.');
+      } else {
+        setSyncButton('🔗', SYNC_TOOLTIP_SIGNED_OUT);
+      }
     }
   }
 
@@ -1716,6 +1780,7 @@
       gTokenClient.callback = (resp) => {
         if (resp.error) { reject(new Error(resp.error)); return; }
         gAccessToken = resp.access_token;
+        writeStoredToken(resp.access_token, resp.expires_in);
         resolve(resp.access_token);
       };
       gTokenClient.requestAccessToken(promptMode !== undefined ? { prompt: promptMode } : {});
@@ -1745,6 +1810,7 @@
     gDriveFileId = null;
     gUserEmail = null;
     clearSyncRemember();
+    clearStoredToken();
     setSyncButton('🔗', SYNC_TOOLTIP_SIGNED_OUT);
   }
 
