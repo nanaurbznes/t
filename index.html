@@ -495,6 +495,7 @@
     border-radius: 16px;
     padding: 26px 30px 22px;
     width: min(760px, 96vw);
+    max-height: 88vh;
     display: flex;
     flex-direction: column;
   }
@@ -502,6 +503,21 @@
   .modal-head-row { display: flex; align-items: center; justify-content: space-between; gap: 10px; }
   .modal-panel h2 { margin: 0; font-size: 21px; letter-spacing: .3px; color: #fff; }
   .modal-panel .modal-sub { font-size: 13px; color: var(--muted); margin: 6px 0 14px; }
+
+  /* Only the Sync Conflicts modal uses this -- the Save/Edit/Close modals
+     are deliberately laid out to fit without scrolling, but a conflict
+     list can be arbitrarily long. */
+  .modal-scroll { overflow-y: auto; flex: 1 1 auto; padding-right: 4px; margin-right: -4px; }
+  .conflict-row {
+    background: var(--bg);
+    border: 1px solid var(--border);
+    border-radius: 10px;
+    padding: 10px 12px;
+    margin-bottom: 10px;
+  }
+  .conflict-row-title { font-weight: 600; color: #fff; margin-bottom: 8px; font-size: 14px; }
+  .conflict-row label { display: block; font-size: 13px; color: var(--text); margin: 4px 0; cursor: pointer; }
+  .conflict-row input[type="radio"] { margin-right: 6px; }
 
   .form-row { margin-bottom: 14px; text-align: left; }
   .form-row label { display: block; font-size: 12.5px; color: var(--muted); margin-bottom: 6px; letter-spacing: .3px; text-transform: uppercase; }
@@ -1652,6 +1668,10 @@
   const GOOGLE_CLIENT_ID = '562729416343-3mb12lrlckvpf8h1l7hjpng5f770e9m8.apps.googleusercontent.com';
   const DRIVE_SCOPE = 'https://www.googleapis.com/auth/drive.appdata';
   const DRIVE_FILE_NAME = 'options-portfolio-sync.json';
+  const DRIVE_POLL_INTERVAL_MS = 20000; // how often to check Drive for changes
+  // made elsewhere (other platform, another device) -- keeps sync "live"
+  // without needing sign-out/in or a refresh to see a change. Only a cheap
+  // metadata check (no download) unless something actually changed.
 
   let gTokenClient = null;
   let gAccessToken = null;
@@ -1808,7 +1828,9 @@
     }
     gAccessToken = null;
     gDriveFileId = null;
+    gDriveModifiedTime = null;
     gUserEmail = null;
+    clearTimeout(gPollTimer);
     clearSyncRemember();
     clearStoredToken();
     setSyncButton('🔗', SYNC_TOOLTIP_SIGNED_OUT);
@@ -1866,8 +1888,8 @@
       `--${boundary}\r\nContent-Type: application/json\r\n\r\n${JSON.stringify(payload)}\r\n` +
       `--${boundary}--`;
     const url = fileId
-      ? `https://www.googleapis.com/upload/drive/v3/files/${fileId}?uploadType=multipart`
-      : `https://www.googleapis.com/upload/drive/v3/files?uploadType=multipart`;
+      ? `https://www.googleapis.com/upload/drive/v3/files/${fileId}?uploadType=multipart&fields=id,modifiedTime`
+      : `https://www.googleapis.com/upload/drive/v3/files?uploadType=multipart&fields=id,modifiedTime`;
     const res = await fetch(url, {
       method: fileId ? 'PATCH' : 'POST',
       headers: { Authorization: 'Bearer ' + gAccessToken, 'Content-Type': `multipart/related; boundary=${boundary}` },
@@ -1877,17 +1899,22 @@
     return res.json();
   }
 
-  // Per-record last-write-wins merge with tombstones for deletes -- NOT a
-  // blind "whichever side we read last wins" overwrite. Cloud data is the
-  // starting point (it's the shared source of truth); local deals/edits
-  // are layered on by recency (updatedTs); explicit local deletions are
-  // tombstones, not just "absent from the local array", so a deal this
-  // client has simply never seen (added by the other platform) is pulled
-  // IN rather than being mistaken for "deleted" and dropped. A tombstone
-  // only wins over a deal if the tombstone is newer than that deal's last
-  // edit -- so if another client re-adds/edits something after this
-  // client deleted it, the newer edit wins (cloud data gets priority on
-  // genuine conflicts, per the "don't run over what's in Drive" ask).
+  // Per-record merge -- NOT a blind "whichever side we read last wins"
+  // overwrite. Cloud data is the starting point; local deals/edits are
+  // layered on by recency (updatedTs, newer wins whichever side it's from).
+  //
+  // Deletions are NEVER auto-applied against a still-live copy on the
+  // other side -- an earlier version of this did that (tombstone wins if
+  // newer than the deal's last edit), and it's exactly how a local delete
+  // made while offline could silently wipe the cloud copy once
+  // reconnected, and how an import could "disappear" a few seconds after
+  // showing (a stale tombstone from an earlier session outliving the deal
+  // it referenced). Instead: if a tombstone's id still has a live deal on
+  // either side, it's a CONFLICT -- returned separately for the caller to
+  // show the user, and the deal is preserved (not deleted) until they
+  // explicitly resolve it. A tombstone only actually removes a deal once
+  // nothing live remains to conflict with -- resolving a conflict is what
+  // does that.
   function mergeDealSets(localDeals, localTombstones, remoteDeals, remoteTombstones) {
     const byId = new Map();
     for (const d of remoteDeals || []) byId.set(d.id, d);
@@ -1905,41 +1932,46 @@
       }
     }
 
+    const conflicts = [];
     for (const t of tombById.values()) {
       const d = byId.get(t.id);
-      if (d && t.deletedAt >= (d.updatedTs || d.createdTs || 0)) {
-        byId.delete(t.id);
-      }
+      if (d) conflicts.push({ id: t.id, deal: d, tombstone: t });
     }
 
-    return { deals: Array.from(byId.values()), tombstones: Array.from(tombById.values()) };
+    return { deals: Array.from(byId.values()), tombstones: Array.from(tombById.values()), conflicts };
   }
 
   async function fetchRemoteState() {
     const file = await driveApi(() => driveFindFile());
-    if (!file) return { fileId: null, deals: [], tombstones: [] };
+    if (!file) return { fileId: null, deals: [], tombstones: [], modifiedTime: null };
     const remote = await driveApi(() => driveDownload(file.id));
     return {
       fileId: file.id,
       deals: (remote && Array.isArray(remote.deals)) ? remote.deals : [],
       tombstones: (remote && Array.isArray(remote.tombstones)) ? remote.tombstones : [],
+      modifiedTime: file.modifiedTime || null,
     };
   }
+
+  let gPushPending = false;
 
   async function pullFromDrive() {
     setSyncButton('⏳', 'Syncing…');
     try {
       const remote = await fetchRemoteState();
       gDriveFileId = remote.fileId;
+      gDriveModifiedTime = remote.modifiedTime;
       const merged = mergeDealSets(deals, tombstones, remote.deals, remote.tombstones);
       deals = merged.deals;
       tombstones = merged.tombstones;
       renderPortfolio();
       setSyncButton('✅', gUserEmail + ' — synced. Click to sign out.');
+      offerConflictResolution(merged.conflicts);
       // If the merge pulled in local-only changes the cloud didn't have
       // yet (new local deals, or this client's tombstones), reconcile
       // Drive immediately rather than waiting for the next edit.
       pushToDriveDebounced();
+      scheduleDrivePoll();
     } catch (err) {
       setSyncButton('⚠', String(err.message || err) + ' — click to retry.');
     }
@@ -1952,7 +1984,15 @@
   }
 
   async function pushToDrive() {
-    if (!gAccessToken || gSyncBusy) return;
+    if (!gAccessToken) return;
+    if (gSyncBusy) {
+      // A sync is already running -- remember to run another one right
+      // after it finishes instead of silently dropping this request, or a
+      // change made mid-flight can get lost (this was the root cause of
+      // "import shows briefly then disappears").
+      gPushPending = true;
+      return;
+    }
     gSyncBusy = true;
     setSyncButton('⏳', 'Syncing…');
     try {
@@ -1960,20 +2000,137 @@
       // from the other platform (made after our last pull) doesn't get
       // silently clobbered by a stale local array.
       const remote = await fetchRemoteState();
-      gDriveFileId = remote.fileId;
       const merged = mergeDealSets(deals, tombstones, remote.deals, remote.tombstones);
-      deals = merged.deals;
-      tombstones = merged.tombstones;
-      const payload = { version: 2, updatedAt: new Date().toISOString(), deals, tombstones };
-      const result = await driveApi(() => driveUpload(gDriveFileId, payload));
-      gDriveFileId = result.id || gDriveFileId;
+      const payload = { version: 2, updatedAt: new Date().toISOString(), deals: merged.deals, tombstones: merged.tombstones };
+      const result = await driveApi(() => driveUpload(remote.fileId, payload));
+      gDriveFileId = result.id || remote.fileId;
+      gDriveModifiedTime = result.modifiedTime || remote.modifiedTime;
+      // Re-merge what was just confirmed-uploaded against whatever local
+      // state looks like RIGHT NOW (it may have moved on during the
+      // network round trip this push just made) instead of blindly
+      // overwriting -- otherwise a local edit/import made while this push
+      // was in flight gets silently discarded here.
+      const settled = mergeDealSets(deals, tombstones, merged.deals, merged.tombstones);
+      deals = settled.deals;
+      tombstones = settled.tombstones;
       renderPortfolio();
       setSyncButton('✅', gUserEmail + ' — synced. Click to sign out.');
+      offerConflictResolution([...merged.conflicts, ...settled.conflicts]);
     } catch (err) {
       setSyncButton('⚠', String(err.message || err));
     } finally {
       gSyncBusy = false;
+      if (gPushPending) {
+        gPushPending = false;
+        pushToDriveDebounced();
+      }
+      scheduleDrivePoll();
     }
+  }
+
+  /* ---------- live sync: poll for changes made elsewhere ---------- */
+  let gDriveModifiedTime = null;
+  let gPollTimer = null;
+
+  function scheduleDrivePoll() {
+    if (!gAccessToken) return;
+    clearTimeout(gPollTimer);
+    gPollTimer = setTimeout(runDrivePoll, DRIVE_POLL_INTERVAL_MS);
+  }
+
+  async function runDrivePoll() {
+    if (!gAccessToken) return;
+    if (gSyncBusy) { scheduleDrivePoll(); return; }
+    try {
+      // Cheap: only lists file metadata (no download) unless something
+      // actually changed since we last looked.
+      const file = await driveApi(() => driveFindFile());
+      const modified = file ? file.modifiedTime : null;
+      if (modified && modified !== gDriveModifiedTime) {
+        // Someone else (the other platform, or this account on another
+        // device) changed the shared file -- pull it in automatically. No
+        // user action (closing the tab, signing out/in) should be needed
+        // to see a cross-platform change; that's the whole point of sync.
+        await pullFromDrive();
+      } else {
+        scheduleDrivePoll();
+      }
+    } catch (err) {
+      scheduleDrivePoll();
+    }
+  }
+
+  /* ---------- sync conflicts ---------- */
+  let gPendingConflicts = [];
+  let gConflictDialogOpen = false;
+
+  function offerConflictResolution(newConflicts) {
+    if (!newConflicts || !newConflicts.length) return;
+    const existingIds = new Set(gPendingConflicts.map(c => c.id));
+    for (const c of newConflicts) {
+      if (!existingIds.has(c.id)) { gPendingConflicts.push(c); existingIds.add(c.id); }
+    }
+    showConflictDialog();
+  }
+
+  function showConflictDialog() {
+    if (gConflictDialogOpen || !gPendingConflicts.length) return;
+    gConflictDialogOpen = true;
+    const conflicts = gPendingConflicts;
+    gPendingConflicts = [];
+
+    const backdrop = document.createElement('div');
+    backdrop.className = 'modal-backdrop';
+    const rowsHtml = conflicts.map(c => {
+      const d = c.deal;
+      const label = d.name || d.ticker || 'Untitled Deal';
+      const head = (d.ticker && d.ticker !== label) ? `${escapeHtml(d.ticker)}  ${escapeHtml(label)}` : escapeHtml(label);
+      return `
+        <div class="conflict-row" data-id="${escapeHtml(c.id)}">
+          <div class="conflict-row-title">${head}</div>
+          <label><input type="radio" name="conflict-${escapeHtml(c.id)}" value="keep" checked> Keep it (undo the deletion, everywhere)</label>
+          <label><input type="radio" name="conflict-${escapeHtml(c.id)}" value="delete"> Delete it (everywhere)</label>
+        </div>`;
+    }).join('');
+    backdrop.innerHTML = `
+      <form class="modal-panel" id="conflictForm">
+        <h2>Sync Conflicts</h2>
+        <p class="modal-sub">These deals were deleted on one device but still exist on another.
+          Nothing has changed yet — pick what happens to each one:</p>
+        <div class="modal-scroll">${rowsHtml}</div>
+        <div class="modal-actions">
+          <button type="button" id="conflictDeferBtn" class="btn btn-secondary">Decide Later</button>
+          <button type="submit" class="btn btn-primary">Apply</button>
+        </div>
+      </form>`;
+    document.body.appendChild(backdrop);
+
+    function closeDialog() {
+      backdrop.remove();
+      gConflictDialogOpen = false;
+    }
+
+    backdrop.querySelector('#conflictDeferBtn').onclick = () => {
+      gPendingConflicts = conflicts.concat(gPendingConflicts);
+      closeDialog();
+    };
+    backdrop.querySelector('#conflictForm').onsubmit = (e) => {
+      e.preventDefault();
+      for (const c of conflicts) {
+        const choice = backdrop.querySelector(`input[name="conflict-${CSS.escape(c.id)}"]:checked`).value;
+        if (choice === 'delete') {
+          deals = deals.filter(d => d.id !== c.id);
+          tombstones = tombstones.filter(t => t.id !== c.id);
+          tombstones.push({ id: c.id, deletedAt: Date.now() });
+        } else {
+          tombstones = tombstones.filter(t => t.id !== c.id);
+        }
+      }
+      closeDialog();
+      renderPortfolio();
+      pushToDriveDebounced();
+      showConflictDialog();
+    };
   }
 
   window.addEventListener('load', initGoogleSync);
