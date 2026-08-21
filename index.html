@@ -1282,6 +1282,16 @@
     return 'd' + Date.now().toString(36) + Math.random().toString(36).slice(2, 8);
   }
 
+  // Normalized fingerprint of a deal's meaningful fields, used by import to
+  // detect "this is the same deal I already have" independent of id --
+  // catches re-importing the same export file (or an older export made
+  // before ids existed) without relying on ids matching.
+  function dealContentSignature(d) {
+    return [d.ticker, d.name, d.spreadType, d.startDate, d.expiryDate,
+            d.shortStrike, d.longStrike, d.total, d.limit, d.ptPct]
+      .map(v => String(v == null ? '' : v).trim().toLowerCase()).join('|');
+  }
+
   function todayStr() {
     return new Date().toISOString().slice(0, 10);
   }
@@ -1395,7 +1405,7 @@
           <div><span>RATIO</span><b class="blue">${truncate2(m.ratio)}%</b></div>
           <div><span>MAX PROFIT</span><b class="green">${money0(m.maxProfit)}</b></div>
           <div><span>MAX LOSS</span><b class="red">${money0(m.maxLoss)}</b></div>
-          <div><span>TARGET PT %</span><b class="blue">${truncate2(m.ptPct)}%</b></div>
+          <div><span>TARGET PT %</span><b class="blue">${m.ptMissing ? '—' : truncate2(m.ptPct) + '%'}</b></div>
           <div><span>FINAL PT %</span><b class="blue">${truncate2(f.finalPtPct)}%</b></div>
           <div><span>FINAL ${sideLabel}</span><b class="${sideClass}">$${f.finalAmount.toLocaleString('en-US')}</b></div>`;
       finalBlock = `
@@ -1405,13 +1415,20 @@
           <div class="deal-final-row"><span>Profit Taker $</span><span>${signed2(f.finalProfitTakerVal)} <button type="button" class="icon-edit-btn" onclick="openCloseModal('${deal.id}')" title="Update">&#9998;</button></span></div>
         </div>`;
     } else {
+      // A deal saved without ever setting a Profit Taker % has ptMissing
+      // true -- showing "0%" / "$0" there reads as a real, computed
+      // result ("no profit") rather than what it actually is ("nothing to
+      // compute from"), which is exactly what got reported as "PT % +
+      // PROFIT + LOSS just showing as 0". Missing-value fields now show
+      // "—", matching how the live calculator already flags a missing
+      // Total/Limit instead of silently treating it as zero.
       metricsHtml = `
           <div><span>RATIO</span><b class="blue">${truncate2(m.ratio)}%</b></div>
           <div><span>MAX PROFIT</span><b class="green">${money0(m.maxProfit)}</b></div>
           <div><span>MAX LOSS</span><b class="red">${money0(m.maxLoss)}</b></div>
-          <div><span>PT %</span><b class="blue">${truncate2(m.ptPct)}%</b></div>
-          <div><span>PT VALUE</span><b class="blue">${formatTruncated2(m.profitTaker)}</b></div>
-          <div><span>${m.sideIsLoss ? 'LOSS' : 'PROFIT'}</span><b class="${m.sideIsLoss ? 'red' : 'green'}">$${Math.abs(m.fifthValue).toLocaleString('en-US')}</b></div>`;
+          <div><span>PT %</span><b class="blue">${m.ptMissing ? '—' : truncate2(m.ptPct) + '%'}</b></div>
+          <div><span>PT VALUE</span><b class="blue">${m.profitTakerMissing ? '—' : formatTruncated2(m.profitTaker)}</b></div>
+          <div><span>${m.sideIsLoss ? 'LOSS' : 'PROFIT'}</span><b class="${m.fifthMissing ? '' : (m.sideIsLoss ? 'red' : 'green')}">${m.fifthMissing ? '—' : '$' + Math.abs(m.fifthValue).toLocaleString('en-US')}</b></div>`;
       finalBlock = '';
     }
 
@@ -1676,8 +1693,25 @@
 
         const existingIds = new Set(deals.map(d => d.id));
         const tombstonedIds = new Set(tombstones.map(t => t.id));
+        const existingSignatures = new Set(deals.map(dealContentSignature));
+        let imported = 0, skipped = 0;
         incoming.forEach(d => {
           if (!d || typeof d !== 'object' || !(d.name || d.ticker)) return;
+          // Importing the SAME export file twice (or a file that overlaps
+          // with what's already saved) used to add a second, fully
+          // duplicate copy of every deal -- an id match only ever
+          // triggered a fresh id, never a skip, so "already have this
+          // one" was never actually detected. ids are randomly generated
+          // per deal, so a matching id IS the same deal, not a
+          // coincidence -- skip it instead of duplicating under a new id.
+          if (d.id && existingIds.has(d.id)) { skipped++; return; }
+          // No id match, but every meaningful field is identical to a deal
+          // already saved -- almost certainly the same conceptual deal
+          // (an older export made before ids existed, or a file that
+          // dropped them) reappearing under no id or a different one.
+          // Same "not a conflict, don't duplicate it" rule as above.
+          const sig = dealContentSignature(d);
+          if (sig && existingSignatures.has(sig)) { skipped++; return; }
           // A re-imported id that matches a past deletion's tombstone would
           // otherwise resurrect it as a genuine ambiguity for merge to sort
           // out (was this deal really meant to come back, or is the
@@ -1685,14 +1719,19 @@
           // treating it as a brand new deal, same as any other id
           // collision below. Most commonly hit by re-importing an old
           // export that still has since-deleted entries in it.
-          if (!d.id || existingIds.has(d.id) || tombstonedIds.has(d.id)) d.id = newDealId();
+          if (!d.id || tombstonedIds.has(d.id)) d.id = newDealId();
           if (!d.createdTs) d.createdTs = Date.now();
           if (!d.updatedTs) d.updatedTs = d.createdTs;
           existingIds.add(d.id);
+          existingSignatures.add(sig);
           deals.push(d);
+          imported++;
         });
         renderPortfolio();
         pushToDriveDebounced();
+        if (skipped) {
+          alert(`Imported ${imported} deal(s). Skipped ${skipped} already in your portfolio.`);
+        }
       } catch (err) {
         alert('Could not read that file — make sure it is a portfolio export from this app.');
       }
