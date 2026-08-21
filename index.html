@@ -1213,6 +1213,11 @@
    * PORTFOLIO / DEALS
    * =================================================================== */
   let deals = [];
+  // Deletions made while this client tracks them here as {id, deletedAt}
+  // rather than just vanishing from `deals` -- so a sync merge can tell
+  // "deliberately deleted" apart from "never seen this deal, don't drop
+  // it" when reconciling against Drive. See mergeDealSets() below.
+  let tombstones = [];
   let closingDealId = null;
   let editingDealId = null;   // null while adding a NEW deal, set while editing
   let dealFormMode = 'simple'; // 'simple' | 'advanced' — controls the save/edit modal
@@ -1490,11 +1495,12 @@
 
     if (editingDealId) {
       const deal = deals.find(d => d.id === editingDealId);
-      if (deal) Object.assign(deal, payload);
+      if (deal) Object.assign(deal, payload, { updatedTs: Date.now() });
     } else {
       deals.push(Object.assign({
         id: newDealId(),
         createdTs: Date.now(),
+        updatedTs: Date.now(),
         closed: false,
         closeDate: '',
         closePtPct: ''
@@ -1559,6 +1565,7 @@
     deal.closed = true;
     deal.closeDate = composeDateMD(document.getElementById('cdDateMonth'), document.getElementById('cdDateDay'));
     deal.closePtPct = String(sanitizePtPct(document.getElementById('cdPtPct').value));
+    deal.updatedTs = Date.now();
     delete deal.exitValue;
 
     closeCloseModal();
@@ -1569,6 +1576,8 @@
   function deleteDeal(id) {
     if (!confirm('Delete this deal permanently?')) return;
     deals = deals.filter(d => d.id !== id);
+    tombstones = tombstones.filter(t => t.id !== id);
+    tombstones.push({ id, deletedAt: Date.now() });
     renderPortfolio();
     pushToDriveDebounced();
   }
@@ -1601,6 +1610,7 @@
           if (!d || typeof d !== 'object' || !(d.name || d.ticker)) return;
           if (!d.id || existingIds.has(d.id)) d.id = newDealId();
           if (!d.createdTs) d.createdTs = Date.now();
+          if (!d.updatedTs) d.updatedTs = d.createdTs;
           existingIds.add(d.id);
           deals.push(d);
         });
@@ -1621,9 +1631,10 @@
    * private to this app. The Python build talks to the SAME file (via
    * its own OAuth client under the same GCP project + same scope), so
    * both read/write identical remote state -- that IS the cross-platform
-   * sync, there's no separate server. Model is deliberately simple:
-   * "last write wins" -- sign-in pulls remote and replaces local deals,
-   * every local mutation pushes the whole array back up. No merge logic.
+   * sync, there's no separate server. Per-record last-write-wins merge
+   * (mergeDealSets, below) on both pull and push -- NOT a blind whole-array
+   * overwrite -- so a concurrent edit/delete on the other platform never
+   * gets silently clobbered by a stale local copy.
    * =================================================================== */
   const GOOGLE_CLIENT_ID = '562729416343-3mb12lrlckvpf8h1l7hjpng5f770e9m8.apps.googleusercontent.com';
   const DRIVE_SCOPE = 'https://www.googleapis.com/auth/drive.appdata';
@@ -1655,11 +1666,15 @@
 
   // GIS never hands client-side JS a refresh token (security), so there is
   // nothing to persist across a reload except "the user was signed in" --
-  // stored here as a flag. On load, if that flag is set, silently re-request
-  // a token (prompt:'') leaning on the still-alive Google session cookie in
-  // the browser; no popup, no re-consent, just picks the session back up.
-  // If that silent request fails (session actually gone), we fall back to
-  // showing the normal "sign in" state -- no error shown, no nagging.
+  // stored here as a flag. IMPORTANT: do NOT use this to auto-call
+  // requestAccessToken() on page load. That call opens a popup, and
+  // browsers (Firefox in particular) block popups that aren't triggered by
+  // a direct user click -- when blocked, the promise never resolves *or*
+  // rejects, so an awaited call just hangs forever, leaving the button
+  // stuck and sign-in never actually completing. Real fix: on load, just
+  // show a "click to reconnect" state:one click, a normal (non-silent,
+  // therefore never blocked) requestAccessToken() call, done -- usually
+  // near-instant since consent was already granted last time.
   const SYNC_REMEMBER_KEY = 'optionsPortfolioGoogleSyncEnabled';
 
   // localStorage can throw (private browsing, strict cookie/storage
@@ -1674,7 +1689,7 @@
     try { localStorage.removeItem(SYNC_REMEMBER_KEY); } catch (err) { /* ignore */ }
   }
 
-  async function initGoogleSync() {
+  function initGoogleSync() {
     if (!syncConfigured()) {
       setSyncButton('🔗',
         'Google Sync not configured — add your OAuth Web Client ID to GOOGLE_CLIENT_ID in this file to enable it.');
@@ -1689,16 +1704,10 @@
       scope: DRIVE_SCOPE,
       callback: () => {},
     });
-    setSyncButton('🔗', SYNC_TOOLTIP_SIGNED_OUT);
-
     if (readSyncRemember()) {
-      setSyncButton('⏳', 'Reconnecting…');
-      try {
-        await requestGoogleToken('');
-        await afterSignIn();
-      } catch (err) {
-        setSyncButton('🔗', SYNC_TOOLTIP_SIGNED_OUT);
-      }
+      setSyncButton('🔄', 'You were signed in before — click to reconnect.');
+    } else {
+      setSyncButton('🔗', SYNC_TOOLTIP_SIGNED_OUT);
     }
   }
 
@@ -1802,19 +1811,69 @@
     return res.json();
   }
 
+  // Per-record last-write-wins merge with tombstones for deletes -- NOT a
+  // blind "whichever side we read last wins" overwrite. Cloud data is the
+  // starting point (it's the shared source of truth); local deals/edits
+  // are layered on by recency (updatedTs); explicit local deletions are
+  // tombstones, not just "absent from the local array", so a deal this
+  // client has simply never seen (added by the other platform) is pulled
+  // IN rather than being mistaken for "deleted" and dropped. A tombstone
+  // only wins over a deal if the tombstone is newer than that deal's last
+  // edit -- so if another client re-adds/edits something after this
+  // client deleted it, the newer edit wins (cloud data gets priority on
+  // genuine conflicts, per the "don't run over what's in Drive" ask).
+  function mergeDealSets(localDeals, localTombstones, remoteDeals, remoteTombstones) {
+    const byId = new Map();
+    for (const d of remoteDeals || []) byId.set(d.id, d);
+
+    const tombById = new Map();
+    for (const t of [...(remoteTombstones || []), ...(localTombstones || [])]) {
+      const existing = tombById.get(t.id);
+      if (!existing || t.deletedAt > existing.deletedAt) tombById.set(t.id, t);
+    }
+
+    for (const d of localDeals || []) {
+      const existing = byId.get(d.id);
+      if (!existing || (d.updatedTs || 0) >= (existing.updatedTs || 0)) {
+        byId.set(d.id, d);
+      }
+    }
+
+    for (const t of tombById.values()) {
+      const d = byId.get(t.id);
+      if (d && t.deletedAt >= (d.updatedTs || d.createdTs || 0)) {
+        byId.delete(t.id);
+      }
+    }
+
+    return { deals: Array.from(byId.values()), tombstones: Array.from(tombById.values()) };
+  }
+
+  async function fetchRemoteState() {
+    const file = await driveApi(() => driveFindFile());
+    if (!file) return { fileId: null, deals: [], tombstones: [] };
+    const remote = await driveApi(() => driveDownload(file.id));
+    return {
+      fileId: file.id,
+      deals: (remote && Array.isArray(remote.deals)) ? remote.deals : [],
+      tombstones: (remote && Array.isArray(remote.tombstones)) ? remote.tombstones : [],
+    };
+  }
+
   async function pullFromDrive() {
     setSyncButton('⏳', 'Syncing…');
     try {
-      const file = await driveApi(() => driveFindFile());
-      if (file) {
-        gDriveFileId = file.id;
-        const remote = await driveApi(() => driveDownload(file.id));
-        if (remote && Array.isArray(remote.deals)) {
-          deals = remote.deals;
-          if (currentMode === 'portfolio') renderPortfolio();
-        }
-      }
+      const remote = await fetchRemoteState();
+      gDriveFileId = remote.fileId;
+      const merged = mergeDealSets(deals, tombstones, remote.deals, remote.tombstones);
+      deals = merged.deals;
+      tombstones = merged.tombstones;
+      renderPortfolio();
       setSyncButton('✅', gUserEmail + ' — synced. Click to sign out.');
+      // If the merge pulled in local-only changes the cloud didn't have
+      // yet (new local deals, or this client's tombstones), reconcile
+      // Drive immediately rather than waiting for the next edit.
+      pushToDriveDebounced();
     } catch (err) {
       setSyncButton('⚠', String(err.message || err) + ' — click to retry.');
     }
@@ -1831,9 +1890,18 @@
     gSyncBusy = true;
     setSyncButton('⏳', 'Syncing…');
     try {
-      const payload = { version: 1, updatedAt: new Date().toISOString(), deals };
+      // Always re-fetch and merge before writing, so a concurrent edit
+      // from the other platform (made after our last pull) doesn't get
+      // silently clobbered by a stale local array.
+      const remote = await fetchRemoteState();
+      gDriveFileId = remote.fileId;
+      const merged = mergeDealSets(deals, tombstones, remote.deals, remote.tombstones);
+      deals = merged.deals;
+      tombstones = merged.tombstones;
+      const payload = { version: 2, updatedAt: new Date().toISOString(), deals, tombstones };
       const result = await driveApi(() => driveUpload(gDriveFileId, payload));
       gDriveFileId = result.id || gDriveFileId;
+      renderPortfolio();
       setSyncButton('✅', gUserEmail + ' — synced. Click to sign out.');
     } catch (err) {
       setSyncButton('⚠', String(err.message || err));
