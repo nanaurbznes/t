@@ -1675,9 +1675,17 @@
         if (!incoming) throw new Error('bad format');
 
         const existingIds = new Set(deals.map(d => d.id));
+        const tombstonedIds = new Set(tombstones.map(t => t.id));
         incoming.forEach(d => {
           if (!d || typeof d !== 'object' || !(d.name || d.ticker)) return;
-          if (!d.id || existingIds.has(d.id)) d.id = newDealId();
+          // A re-imported id that matches a past deletion's tombstone would
+          // otherwise resurrect it as a genuine ambiguity for merge to sort
+          // out (was this deal really meant to come back, or is the
+          // deletion still authoritative?) -- sidestep that entirely by
+          // treating it as a brand new deal, same as any other id
+          // collision below. Most commonly hit by re-importing an old
+          // export that still has since-deleted entries in it.
+          if (!d.id || existingIds.has(d.id) || tombstonedIds.has(d.id)) d.id = newDealId();
           if (!d.createdTs) d.createdTs = Date.now();
           if (!d.updatedTs) d.updatedTs = d.createdTs;
           existingIds.add(d.id);
@@ -1784,29 +1792,38 @@
   }
 
   // Reuses a still-valid stored access token with NO API call, NO popup --
-  // just picks the prior session back up. Verifies the token still actually
-  // works (it could have been revoked server-side despite not being
-  // expired) before committing to it; falls back cleanly otherwise.
+  // just picks the prior session back up.
+  //
+  // This used to "verify" the token first via a separate call to Google's
+  // userinfo endpoint, and treated ANY failure of that call -- a slow
+  // network, a dropped connection, literally anything, not just an actual
+  // invalid/revoked token -- as proof the token was dead, wiping the saved
+  // session and forcing a full re-login. That's exactly what a plain page
+  // refresh right after signing in would intermittently trigger (a cold
+  // connection, a background-tab-throttled fetch, etc.), which is almost
+  // certainly what was behind the repeated "disconnects on refresh" reports.
+  // Now it just restores the token and goes straight to the real work
+  // (pullFromDrive, which already retries once through a silent refresh on
+  // an actual 401 via driveApi) -- a transient network error there shows
+  // the existing retry-able ⚠ state and leaves the stored token alone, so
+  // the NEXT click/poll can still succeed with it. The token is only ever
+  // discarded when Drive itself confirms it's genuinely dead (401 even
+  // after the silent-refresh retry) -- see driveApi's `authDead` marker.
   async function tryResumeStoredToken() {
     const stored = readStoredToken();
     if (!stored || stored.expiresAt - TOKEN_EXPIRY_SAFETY_MS <= Date.now()) return false;
     gAccessToken = stored.accessToken;
+    gUserEmail = gUserEmail || 'Google account';
     setSyncButton('⏳', 'Reconnecting…');
-    try {
-      const res = await fetch('https://www.googleapis.com/oauth2/v3/userinfo', {
-        headers: { Authorization: 'Bearer ' + gAccessToken }
-      });
-      if (!res.ok) throw new Error('stored token no longer valid');
-      const info = await res.json();
-      gUserEmail = info.email || 'Google account';
-      writeSyncRemember();
-      await pullFromDrive();
-      return true;
-    } catch (err) {
-      gAccessToken = null;
-      clearStoredToken();
-      return false;
-    }
+    writeSyncRemember();
+    // Best-effort only -- fetch the real email for the tooltip, but never
+    // let its failure affect whether we stay signed in.
+    fetch('https://www.googleapis.com/oauth2/v3/userinfo', { headers: { Authorization: 'Bearer ' + gAccessToken } })
+      .then(res => res.ok ? res.json() : null)
+      .then(info => { if (info && info.email) gUserEmail = info.email; })
+      .catch(() => {});
+    await pullFromDrive();
+    return true;
   }
 
   async function initGoogleSync() {
@@ -1894,14 +1911,29 @@
   }
 
   // Wraps a Drive API call; on a 401 (expired token) it does one silent
-  // token refresh and retries once before giving up.
+  // token refresh and retries once before giving up. If the silent refresh
+  // itself fails, or the retried call is STILL a 401, that's a genuinely
+  // dead token (revoked, or the underlying Google session is gone) rather
+  // than an ordinary transient error -- marked via `authDead` so callers
+  // can tell the difference and only THEN drop the stored session and ask
+  // for a real sign-in, instead of doing that for every passing network hiccup.
   async function driveApi(fn) {
     try {
       return await fn();
     } catch (err) {
       if (String(err.message).includes('401')) {
-        await requestGoogleToken('');
-        return await fn();
+        try {
+          await requestGoogleToken('');
+        } catch (refreshErr) {
+          refreshErr.authDead = true;
+          throw refreshErr;
+        }
+        try {
+          return await fn();
+        } catch (retryErr) {
+          if (String(retryErr.message).includes('401')) retryErr.authDead = true;
+          throw retryErr;
+        }
       }
       throw err;
     }
@@ -2015,6 +2047,21 @@
 
   let gPushPending = false;
 
+  // Shared by pullFromDrive/pushToDrive's catch blocks. Only a confirmed-
+  // dead token (see driveApi's `authDead`) drops the stored session and
+  // asks for a real sign-in; an ordinary transient error (network blip,
+  // 5xx, timeout) just shows a retry-able ⚠ and leaves the session alone
+  // -- see tryResumeStoredToken's comment for why that distinction matters.
+  function handleSyncError(err) {
+    if (err && err.authDead) {
+      gAccessToken = null;
+      clearStoredToken();
+      setSyncButton('🔗', 'Google session expired — click to sign in again.');
+    } else {
+      setSyncButton('⚠', String(err.message || err) + ' — click to retry.');
+    }
+  }
+
   async function pullFromDrive() {
     setSyncButton('⏳', 'Syncing…');
     try {
@@ -2033,7 +2080,7 @@
       pushToDriveDebounced();
       scheduleDrivePoll();
     } catch (err) {
-      setSyncButton('⚠', String(err.message || err) + ' — click to retry.');
+      handleSyncError(err);
     }
   }
 
@@ -2058,10 +2105,29 @@
     try {
       // Always re-fetch and merge before writing, so a concurrent edit
       // from the other platform (made after our last pull) doesn't get
-      // silently clobbered by a stale local array.
-      const remote = await fetchRemoteState();
-      const merged = mergeDealSets(deals, tombstones, remote.deals, remote.tombstones, gResolvedConflicts);
-      const payload = { version: 2, updatedAt: new Date().toISOString(), deals: merged.deals, tombstones: merged.tombstones };
+      // silently clobbered by a stale local array. A single fetch-then-
+      // write still leaves a gap where the OTHER platform (running at the
+      // same time) could write in between -- bounded retry: right before
+      // actually uploading, do one more cheap metadata-only check; if the
+      // file changed since we fetched it, someone wrote in between our
+      // read and our write, so our payload was computed from state that's
+      // now stale and would silently clobber their write. Re-fetch and
+      // redo the merge against the FRESH remote instead of uploading
+      // blindly -- this is what "especially buggy with HTML & Python both
+      // running" was hitting: two independent read-modify-write cycles
+      // racing with no coordination beyond whichever one wrote last.
+      let remote, merged, payload;
+      for (let attempt = 0; attempt < 5; attempt++) {
+        remote = await fetchRemoteState();
+        merged = mergeDealSets(deals, tombstones, remote.deals, remote.tombstones, gResolvedConflicts);
+        payload = { version: 2, updatedAt: new Date().toISOString(), deals: merged.deals, tombstones: merged.tombstones };
+        const recheck = await driveApi(() => driveFindFile());
+        const recheckModified = recheck ? recheck.modifiedTime : null;
+        if (remote.modifiedTime && recheckModified && recheckModified !== remote.modifiedTime) {
+          continue; // someone else wrote since our fetch -- redo with fresh state
+        }
+        break;
+      }
       const result = await driveApi(() => driveUpload(remote.fileId, payload));
       gDriveFileId = result.id || remote.fileId;
       gDriveModifiedTime = result.modifiedTime || remote.modifiedTime;
@@ -2077,7 +2143,7 @@
       setSyncButton('✅', gUserEmail + ' — synced. Click to sign out.');
       offerConflictResolution([...merged.conflicts, ...settled.conflicts]);
     } catch (err) {
-      setSyncButton('⚠', String(err.message || err));
+      handleSyncError(err);
     } finally {
       gSyncBusy = false;
       if (gPushPending) {
