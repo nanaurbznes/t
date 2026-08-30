@@ -1,0 +1,1496 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>Options v2.0 - GolaN</title>
+<style>
+  :root {
+    --bg: #000;
+    --panel: #07090a;
+    --border: #34383c;
+    --text: #c4c3c3;
+    --muted: #646464;
+    --blue: #047ebb;
+    --green: #049f3d;
+    --red: #c9040a;
+    --row: #16191b;
+    --zoom-scale: 1;
+  }
+
+  * { box-sizing: border-box; }
+
+  html {
+    background: var(--bg);
+  }
+
+  body {
+    margin: 0;
+    min-height: 100vh;
+    background: var(--bg);
+    color: var(--text);
+    font-family: Arial, Helvetica, sans-serif;
+    padding: 24px 20px 18px;
+  }
+
+  .page-frame {
+    width: min(1280px, 100%);
+    margin: 0 auto;
+    position: relative;
+  }
+
+  .app {
+    width: 100%;
+    margin: 0 auto;
+  }
+
+  /* ---------- top-right action bar (Save + mode toggle) ---------- */
+  .topbar-actions {
+    position: fixed;
+    top: 18px;
+    right: 22px;
+    z-index: 60;
+    display: flex;
+    align-items: center;
+    gap: 10px;
+  }
+
+  .btn-save-top {
+    padding: 10px 16px;
+    border-radius: 10px;
+    font-size: 14px;
+    box-shadow: 0 4px 14px rgba(0,0,0,.5);
+  }
+
+  .mode-toggle-btn {
+    width: 52px;
+    height: 52px;
+    border-radius: 50%;
+    border: 1px solid var(--border);
+    background: var(--panel);
+    color: var(--text);
+    font-size: 22px;
+    cursor: pointer;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    box-shadow: 0 4px 14px rgba(0,0,0,.5);
+  }
+  .mode-toggle-btn:hover { border-color: #8b8f93; }
+
+  .inputs {
+    display: grid;
+    grid-template-columns: repeat(3, minmax(0, 220px));
+    justify-content: center;
+    gap: 36px;
+    margin: 0 auto 20px;
+  }
+
+  .input-group { text-align: center; }
+
+  label {
+    display: block;
+    font-size: 15px;
+    margin-bottom: 8px;
+    letter-spacing: .3px;
+  }
+
+  input, select {
+    width: 100%;
+    height: 58px;
+    border: 1px solid #4b4e52;
+    border-radius: 13px;
+    background: #010101;
+    color: white;
+    text-align: center;
+    font-size: 32px;
+    outline: none;
+    padding: 0 10px;
+    font-family: inherit;
+  }
+
+  input:focus, select:focus { border-color: #8b8f93; }
+
+  input::placeholder {
+    color: var(--muted);
+    opacity: 1;
+    font-size: 18px;
+    letter-spacing: .2px;
+  }
+
+  .metric-value.missing {
+    color: var(--muted);
+    font-size: 14px;
+    font-weight: 400;
+    letter-spacing: .2px;
+  }
+
+  .panel {
+    border: 1px solid var(--border);
+    border-radius: 14px;
+    background: var(--panel);
+    overflow: hidden;
+  }
+
+  .summary {
+    display: grid;
+    grid-template-columns: repeat(5, minmax(0, 1fr));
+    margin-bottom: 16px;
+  }
+
+  .metric {
+    min-height: 135px;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    position: relative;
+    gap: 4px;
+  }
+
+  .metric + .metric { border-left: 1px solid #45494d; }
+
+  .metric-title {
+    font-size: 18px;
+    color: #9f9f9f;
+    margin-bottom: 10px;
+    letter-spacing: .5px;
+  }
+
+  .metric-content {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+  }
+
+  .metric-value {
+    font-size: 38px;
+    line-height: 1;
+    font-weight: 500;
+  }
+
+  .metric-value.red { color: var(--red); }
+  .metric-value.green { color: var(--green); }
+
+  .icon {
+    font-size: 22px;
+    line-height: 1;
+    margin-top: 0;
+    width: 33px;
+    height: 33px;
+    border: 2px solid currentColor;
+    border-radius: 30%;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    background: none;
+    padding: 0;
+  }
+
+  .blue { color: var(--blue); }
+  .red { color: var(--red); }
+  .green { color: var(--green); }
+
+  /* ---------- main content / table toggle ---------- */
+  .main-layout {
+    display: grid;
+    grid-template-columns: minmax(0, 1.18fr) minmax(460px, .92fr);
+    gap: 14px;
+    align-items: start;
+  }
+
+  .chart-panel {
+    padding: 22px 22px 17px;
+    margin: 0;
+    min-width: 0;
+  }
+
+  .chart {
+    display: grid;
+    grid-template-columns: 105px minmax(0, 1fr);
+    grid-template-rows: 1fr 1fr;
+    min-height: 330px;
+    position: relative;
+  }
+
+  .chart-label {
+    display: flex;
+    align-items: center;
+    justify-content: flex-end;
+    padding-right: 17px;
+    font-size: 17px;
+    gap: 10px;
+    white-space: nowrap;
+  }
+
+  .dot {
+    width: 9px;
+    height: 9px;
+    border-radius: 50%;
+    flex: 0 0 auto;
+  }
+
+  .dot.red { background: var(--red); }
+  .dot.green { background: var(--green); }
+
+  .plot {
+    grid-row: 1 / 3;
+    grid-column: 2;
+    position: relative;
+    border-left: 2px solid #eee;
+    background-image: repeating-linear-gradient(
+      to right,
+      transparent 0,
+      transparent calc(25% - 1px),
+      #3b3e42 calc(25% - 1px),
+      #3b3e42 25%
+    );
+  }
+
+  .bar {
+    position: absolute;
+    left: 0;
+    height: 52px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    color: #000;
+    font-size: 21px;
+    font-weight: 500;
+    min-width: 70px;
+    transition: width .15s ease;
+  }
+
+  .bar.loss { top: 60px; background: #e30918; }
+  .bar.profit { top: 223px; background: #10ad48; }
+
+  .scale {
+    position: absolute;
+    left: -2px;
+    right: 0;
+    bottom: -25px;
+    height: 24px;
+    display: flex;
+    justify-content: space-between;
+    color: #aaa;
+    font-size: 13px;
+  }
+
+  .table-column {
+    min-width: 0;
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+  }
+
+  .table-wrap {
+    overflow-x: auto;
+    min-width: 0;
+  }
+
+  table {
+    width: 100%;
+    border-collapse: collapse;
+    table-layout: fixed;
+    min-width: 0;
+  }
+
+  th, td {
+    border-right: 1px solid #45494d;
+    border-bottom: 1px solid #45494d;
+    text-align: center;
+    height: 45px;
+    font-size: 14px;
+    white-space: nowrap;
+  }
+
+  th:last-child, td:last-child { border-right: 0; }
+  tr:last-child td { border-bottom: 0; }
+
+  th {
+    height: 52px;
+    font-weight: 400;
+    color: var(--blue);
+  }
+
+  th:nth-child(4), td:nth-child(4) { color: var(--green); }
+  th:nth-child(5), td:nth-child(5) { color: var(--red); }
+  td { color: white; }
+  tbody tr:nth-child(even) { background: var(--row); }
+
+  /* ---------- buttons ---------- */
+  .btn {
+    border: none;
+    border-radius: 9px;
+    padding: 11px 20px;
+    font-size: 14px;
+    cursor: pointer;
+    font-weight: 500;
+    font-family: inherit;
+    letter-spacing: .2px;
+  }
+  .btn-primary { background: var(--blue); color: #fff; }
+  .btn-primary:hover { background: #0691d6; }
+  .btn-secondary { background: transparent; border: 1px solid var(--border); color: var(--text); }
+  .btn-secondary:hover { border-color: #8b8f93; }
+  .btn-danger { background: transparent; border: 1px solid var(--red); color: var(--red); }
+  .btn-danger:hover { background: rgba(201,4,10,.1); }
+  .btn-mini { padding: 5px 10px; font-size: 12px; border-radius: 7px; }
+  .btn-file {
+    display: inline-block;
+    position: relative;
+    overflow: hidden;
+  }
+  .btn-file input[type="file"] {
+    position: absolute;
+    inset: 0;
+    opacity: 0;
+    cursor: pointer;
+    height: 100%;
+    width: 100%;
+  }
+
+  /* ---------- portfolio view ---------- */
+  #portfolioView { display: none; }
+
+  .portfolio-header {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    flex-wrap: wrap;
+    gap: 12px;
+    margin: 10px 0 22px;
+    padding-right: 70px; /* keep clear of the fixed topbar-actions */
+  }
+
+  .portfolio-title {
+    font-size: 26px;
+    letter-spacing: .4px;
+    color: var(--text);
+  }
+  .portfolio-title span { color: var(--muted); font-size: 15px; margin-left: 10px; letter-spacing: 0; }
+
+  .portfolio-actions { display: flex; gap: 10px; flex-wrap: wrap; }
+
+  .portfolio-empty {
+    text-align: center;
+    padding: 70px 20px;
+    color: var(--muted);
+    font-size: 16px;
+    border: 1px dashed var(--border);
+    border-radius: 14px;
+  }
+
+  .deal-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fill, minmax(330px, 1fr));
+    gap: 16px;
+    margin-bottom: 40px;
+  }
+
+  .deal-card { padding: 20px 22px 18px; display: flex; flex-direction: column; gap: 12px; background: var(--bg); }
+
+  .deal-card-head { display: flex; align-items: flex-start; justify-content: space-between; }
+  .deal-name { font-size: 19px; font-weight: 600; color: #fff; display: flex; align-items: center; gap: 9px; flex-wrap: wrap; }
+  .deal-ticker { font-weight: 800; text-transform: uppercase; letter-spacing: .6px; color: #fff; font-size: 20px; }
+  .deal-title-text { font-weight: 500; color: var(--text); font-size: 16px; }
+  .deal-sub { font-size: 13px; color: var(--muted); margin-top: 4px; letter-spacing: .2px; }
+
+  .badge {
+    font-size: 11px;
+    font-weight: 700;
+    letter-spacing: .6px;
+    padding: 3px 9px;
+    border-radius: 20px;
+    border: 1px solid currentColor;
+  }
+  .badge-open { color: var(--blue); }
+  .badge-closed { color: var(--muted); border-style: dashed; }
+
+  .deal-dates {
+    font-size: 13px;
+    color: var(--text);
+    background: var(--bg);
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    padding: 8px 10px;
+    text-align: center;
+    letter-spacing: .2px;
+  }
+
+  .deal-legs {
+    display: flex;
+    justify-content: space-between;
+    font-size: 13px;
+    color: var(--muted);
+  }
+  .deal-legs b { color: var(--text); font-weight: 600; }
+
+  .deal-metrics {
+    display: grid;
+    grid-template-columns: repeat(3, 1fr);
+    gap: 10px 6px;
+    border-top: 1px solid var(--border);
+    border-bottom: 1px solid var(--border);
+    padding: 10px 0;
+  }
+  .deal-metrics > div { display: flex; flex-direction: column; align-items: center; gap: 4px; }
+  .deal-metrics span { font-size: 10px; color: var(--muted); letter-spacing: .4px; }
+  .deal-metrics b { font-size: 15px; font-weight: 600; }
+
+  .deal-final {
+    background: var(--bg);
+    border: 1px solid var(--border);
+    border-radius: 10px;
+    padding: 10px 12px;
+    display: flex;
+    flex-direction: column;
+    gap: 6px;
+  }
+  .deal-final-row { display: flex; justify-content: space-between; font-size: 13px; }
+  .deal-final-row span:first-child { color: var(--muted); }
+
+  .deal-actions { display: flex; gap: 8px; justify-content: flex-end; margin-top: 2px; flex-wrap: wrap; }
+
+  /* ---------- modal ---------- */
+  .modal-backdrop {
+    position: fixed;
+    inset: 0;
+    background: rgba(0,0,0,.72);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    z-index: 100;
+    padding: 20px;
+  }
+  .modal-backdrop.hidden { display: none; }
+
+  .modal-panel {
+    background: var(--panel);
+    border: 1px solid var(--border);
+    border-radius: 16px;
+    padding: 26px 30px 22px;
+    width: min(760px, 96vw);
+    display: flex;
+    flex-direction: column;
+  }
+
+  .modal-head-row { display: flex; align-items: center; justify-content: space-between; gap: 10px; }
+  .modal-panel h2 { margin: 0; font-size: 21px; letter-spacing: .3px; color: #fff; }
+  .modal-panel .modal-sub { font-size: 13px; color: var(--muted); margin: 6px 0 14px; }
+
+  .form-row { margin-bottom: 14px; text-align: left; }
+  .form-row label { display: block; font-size: 12.5px; color: var(--muted); margin-bottom: 6px; letter-spacing: .3px; text-transform: uppercase; }
+  .form-row input, .form-row select {
+    width: 100%;
+    height: 44px;
+    border: 1px solid #4b4e52;
+    border-radius: 9px;
+    background: #010101;
+    color: white;
+    padding: 0 12px;
+    font-size: 15px;
+    text-align: left;
+  }
+  .ticker-input {
+    font-weight: 800 !important;
+    letter-spacing: 1px !important;
+    text-transform: uppercase;
+  }
+  .form-grid-2 { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; }
+  .form-grid-3 { display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 12px; }
+
+  .adv-hidden { display: none !important; }
+
+  /* ---------- month/day date picker (no year field) ---------- */
+  .date-pair { display: flex; align-items: center; gap: 6px; }
+  .date-pair select {
+    width: 68px;
+    flex: 0 0 auto;
+    height: 44px;
+    padding: 0 6px;
+    text-align: center;
+  }
+  .date-preview {
+    font-size: 12px;
+    color: var(--muted);
+    margin-left: 4px;
+    white-space: nowrap;
+  }
+
+  /* buttons stay pinned below the scroll area, always reachable */
+  .modal-actions {
+    display: flex;
+    justify-content: flex-end;
+    gap: 10px;
+    margin-top: 16px;
+    padding-top: 14px;
+    border-top: 1px solid var(--border);
+    flex: 0 0 auto;
+  }
+
+  /* ---------- footer ---------- */
+  .footer {
+    text-align: center;
+    color: #666;
+    font-size: 16px;
+    letter-spacing: 2px;
+    margin-top: 20px;
+  }
+
+  /* ---------- responsive ---------- */
+  @media (max-width: 980px) {
+    body { padding: 18px 12px; }
+
+    .inputs {
+      padding-right: 0;
+      grid-template-columns: repeat(3, minmax(0, 180px));
+      gap: 18px;
+    }
+
+    .main-layout {
+      grid-template-columns: 1fr;
+    }
+  }
+
+  @media (max-width: 700px) {
+    .inputs {
+      grid-template-columns: repeat(3, minmax(0, 1fr));
+      gap: 10px;
+    }
+
+    label { font-size: 13px; }
+    input, select { height: 52px; font-size: 27px; }
+
+    .summary { grid-template-columns: repeat(2, 1fr); }
+
+    .metric {
+      min-height: 115px;
+    }
+
+    .metric:nth-child(3) {
+      border-left: 0;
+      border-top: 1px solid #45494d;
+    }
+
+    .metric:nth-child(4) {
+      border-top: 1px solid #45494d;
+    }
+
+    .metric-value { font-size: 32px; }
+    .chart { grid-template-columns: 85px minmax(0, 1fr); }
+    .chart-label { font-size: 13px; padding-right: 10px; }
+    th, td { font-size: 12px; }
+    .mode-toggle-btn { width: 44px; height: 44px; font-size: 18px; }
+    .btn-save-top { padding: 8px 12px; font-size: 12px; }
+    .topbar-actions { top: 12px; right: 14px; gap: 6px; }
+    .portfolio-header { padding-right: 0; }
+    .form-grid-2, .form-grid-3 { grid-template-columns: 1fr; }
+    .deal-metrics { grid-template-columns: repeat(2, 1fr); }
+  }
+
+  @media (max-width: 500px) {
+    .inputs { grid-template-columns: 1fr; max-width: 250px; }
+    .summary { grid-template-columns: 1fr; }
+
+    .metric + .metric {
+      border-left: 0;
+      border-top: 1px solid #45494d;
+    }
+
+    .chart {
+      grid-template-columns: 72px minmax(0, 1fr);
+      min-height: 225px;
+    }
+
+    .chart-label { font-size: 11px; }
+    .bar { font-size: 17px; height: 46px; }
+    .bar.loss { top: 29px; }
+    .bar.profit { top: 113px; }
+  }
+</style>
+</head>
+<body>
+<div class="page-frame">
+
+  <div class="topbar-actions">
+    <button id="topSaveBtn" class="btn btn-primary btn-save-top" onclick="openSaveModal()">&#x1F4BE; Save</button>
+    <button id="modeToggleBtn" class="mode-toggle-btn" title="Switch to Portfolio Mode" onclick="setMode('portfolio')">&#x1F4C1;</button>
+  </div>
+
+  <div class="zoom-stage">
+    <main class="app">
+
+    <!-- ================= CALCULATOR MODE ================= -->
+    <div id="calculatorView">
+
+      <section class="inputs">
+        <div class="input-group">
+          <label for="total">Total $</label>
+          <input id="total" inputmode="decimal" value="1000" placeholder="Missing Value" />
+        </div>
+        <div class="input-group">
+          <label for="limit">Limit $</label>
+          <input id="limit" inputmode="decimal" value="-3.33" aria-label="Limit dollar value" placeholder="Missing Value" />
+        </div>
+        <div class="input-group">
+          <label for="ptPct">PROFIT TAKER %</label>
+          <input id="ptPct" inputmode="decimal" value="80" placeholder="Missing Value" />
+        </div>
+      </section>
+
+      <section class="panel summary">
+        <div class="metric">
+          <div class="metric-title">RATIO</div>
+          <div class="metric-content">
+            <div id="ratio" class="metric-value">51.7</div>
+            <div class="icon blue">%</div>
+          </div>
+        </div>
+        <div class="metric">
+          <div class="metric-title">MAX LOSS</div>
+          <div class="metric-content">
+            <div id="maxLoss" class="metric-value red">$989</div>
+            <div class="icon red">↓</div>
+          </div>
+        </div>
+        <div class="metric">
+          <div class="metric-title">MAX PROFIT</div>
+          <div class="metric-content">
+            <div id="maxProfit" class="metric-value green">$511</div>
+            <div class="icon green">↑</div>
+          </div>
+        </div>
+        <div class="metric">
+          <div class="metric-title">PROFIT TAKER</div>
+          <div class="metric-content">
+            <div id="profitTaker" class="metric-value">-1.02</div>
+            <div class="icon blue">💰</div>
+          </div>
+        </div>
+        <div class="metric">
+          <div id="dynamicStopTitle" class="metric-title">LOSS</div>
+          <div class="metric-content">
+            <div id="dynamicStopValue" class="metric-value red">$73</div>
+            <div id="dynamicStopIcon" class="icon red">↓</div>
+          </div>
+        </div>
+      </section>
+
+      <section id="mainLayout" class="main-layout">
+        <section class="panel chart-panel">
+          <div class="chart">
+            <div class="chart-label"><span>Max Loss</span><span class="dot red"></span></div>
+            <div class="chart-label"><span>Max Profit</span><span class="dot green"></span></div>
+            <div class="plot">
+              <div id="lossBar" class="bar loss">$989</div>
+              <div id="profitBar" class="bar profit">$511</div>
+              <div id="scale" class="scale"></div>
+            </div>
+          </div>
+        </section>
+
+        <section class="table-column">
+          <section class="panel table-wrap">
+            <table>
+              <thead>
+                <tr>
+                  <th><span> Ratio</th>
+                  <th></span> Limit</th>
+                  <th></span> <span id="ptHeader">PT</span></th>
+                  <th></span> Profit</th>
+                  <th></span> Loss</th>
+                </tr>
+              </thead>
+              <tbody id="rows"></tbody>
+            </table>
+          </section>
+        </section>
+      </section>
+    </div>
+
+    <!-- ================= PORTFOLIO MODE ================= -->
+    <div id="portfolioView">
+      <div class="portfolio-header">
+        <div class="portfolio-title">Chain Options Portfolio <span id="dealCount"></span></div>
+        <div class="portfolio-actions">
+          <button type="button" class="btn btn-primary" onclick="openSaveModal()">+ New Deal</button>
+          <button type="button" class="btn btn-secondary" onclick="exportDeals()">&#x2B07; Export</button>
+          <label class="btn btn-secondary btn-file">&#x2B06; Import
+            <input type="file" accept="application/json" onchange="importDealsFile(event)" />
+          </label>
+        </div>
+      </div>
+
+      <div id="portfolioEmpty" class="portfolio-empty">
+        No deals saved yet. Use <b>Save</b> from the top bar, or <b>+ New Deal</b> here, to add your first spread.
+      </div>
+
+      <div id="dealGrid" class="deal-grid"></div>
+    </div>
+
+    <div class="footer">Options v2.0 by Golan</div>
+    </main>
+  </div>
+</div>
+
+<!-- ================= SAVE / EDIT DEAL MODAL (shared) ================= -->
+<div id="saveDealModal" class="modal-backdrop hidden">
+  <form class="modal-panel" onsubmit="submitSaveDeal(event)">
+    <div class="modal-head-row">
+      <h2 id="modalTitle">Save Deal</h2>
+      <button type="button" id="sdModeBtn" class="btn btn-secondary btn-mini" onclick="toggleFormMode()">&#x2728; Simple</button>
+    </div>
+    <p class="modal-sub">Record this spread's trade parameters into your portfolio.</p>
+
+    <div class="form-grid-2">
+      <div class="form-row">
+        <label for="sdTicker">Ticker (letters only)</label>
+        <input id="sdTicker" type="text" class="ticker-input" maxlength="10" placeholder="e.g. SPY"
+               oninput="this.value = this.value.replace(/[^a-zA-Z]/g, '').toUpperCase()" />
+      </div>
+      <div class="form-row">
+        <label for="sdName">Title</label>
+        <input id="sdName" type="text" placeholder="e.g. Weekly Put Spread" />
+      </div>
+    </div>
+
+    <div id="sdAdvanced" class="adv-hidden">
+      <div class="form-grid-3">
+        <div class="form-row">
+          <label for="sdSpreadType">Spread Type</label>
+          <select id="sdSpreadType">
+            <option value="Bull Put Spread">Bull Put Spread</option>
+            <option value="Bear Call Spread">Bear Call Spread</option>
+          </select>
+        </div>
+        <div class="form-row">
+          <label for="sdShort">Short Leg Strike $</label>
+          <input id="sdShort" type="text" inputmode="decimal" placeholder="e.g. 500" />
+        </div>
+        <div class="form-row">
+          <label for="sdLong">Long Leg Strike $</label>
+          <input id="sdLong" type="text" inputmode="decimal" placeholder="e.g. 495" />
+        </div>
+      </div>
+    </div>
+
+    <div class="form-grid-2">
+      <div class="form-row">
+        <label for="sdStartMonth">Start Date</label>
+        <div class="date-pair">
+          <select id="sdStartMonth"></select>
+          <span>/</span>
+          <select id="sdStartDay"></select>
+          <span id="sdStartPreview" class="date-preview"></span>
+        </div>
+      </div>
+      <div class="form-row">
+        <label for="sdExpiryMonth">Expiry Date</label>
+        <div class="date-pair">
+          <select id="sdExpiryMonth"></select>
+          <span>/</span>
+          <select id="sdExpiryDay"></select>
+          <span id="sdExpiryPreview" class="date-preview"></span>
+        </div>
+      </div>
+    </div>
+
+    <div class="form-grid-3">
+      <div class="form-row">
+        <label for="sdTotal">Total $</label>
+        <input id="sdTotal" type="text" inputmode="decimal" />
+      </div>
+      <div class="form-row">
+        <label for="sdLimit">Limit $</label>
+        <input id="sdLimit" type="text" inputmode="decimal" />
+      </div>
+      <div class="form-row">
+        <label for="sdPt">Profit Taker %</label>
+        <input id="sdPt" type="text" inputmode="decimal" />
+      </div>
+    </div>
+
+    <div class="modal-actions">
+      <button type="button" class="btn btn-secondary" onclick="closeSaveModal()">Cancel</button>
+      <button type="submit" id="sdSubmitBtn" class="btn btn-primary">Save Deal</button>
+    </div>
+  </form>
+</div>
+
+<!-- ================= CLOSE DEAL MODAL ================= -->
+<div id="closeDealModal" class="modal-backdrop hidden">
+  <form class="modal-panel" onsubmit="submitCloseDeal(event)">
+    <h2>Close Deal</h2>
+    <p class="modal-sub">Closing <b id="cdDealName">—</b>. Enter the final exit parameters.</p>
+
+    <div class="form-row">
+      <label for="cdDateMonth">Close Date</label>
+      <div class="date-pair">
+        <select id="cdDateMonth"></select>
+        <span>/</span>
+        <select id="cdDateDay"></select>
+        <span id="cdDatePreview" class="date-preview"></span>
+      </div>
+    </div>
+    <div class="form-row">
+      <label for="cdExit">Exit Value $ <span style="text-transform:none;color:var(--muted);">(same format as Limit $, e.g. -0.25)</span></label>
+      <input id="cdExit" type="text" inputmode="decimal" placeholder="e.g. -0.25" required />
+    </div>
+
+    <div class="modal-actions">
+      <button type="button" class="btn btn-secondary" onclick="closeCloseModal()">Cancel</button>
+      <button type="submit" class="btn btn-primary">Confirm Close</button>
+    </div>
+  </form>
+</div>
+
+<script>
+  const totalEl = document.getElementById('total');
+  const limitEl = document.getElementById('limit');
+  const ptPctEl = document.getElementById('ptPct');
+
+  /* ===================================================================
+   * CORE MATH ENGINE
+   * These functions are the single source of truth for spread math and
+   * are kept in strict 1:1 sync with the Python/Tkinter build. UNTOUCHED
+   * by the ticker/title/edit/date-entry work below.
+   * =================================================================== */
+
+  function number(v, fallback) {
+    const n = parseFloat(String(v).replace(/[$,%\s,]/g, ''));
+    return Number.isFinite(n) ? n : fallback;
+  }
+
+  function truncate2(value) {
+    return Math.trunc(value * 100) / 100;
+  }
+
+  function clamp(value, min, max) {
+    return Math.min(max, Math.max(min, value));
+  }
+
+  function formatTruncated2(value) {
+    const truncated = truncate2(value);
+    const abs = Math.abs(truncated).toFixed(2);
+    return truncated < 0 ? '-' + abs : abs;
+  }
+
+  function sanitizePtPct(value) {
+    const raw = String(value).trim();
+    if (raw === '' || raw === '-' || raw === '+' || raw === '.' || raw === '-.' || raw === '+.') return 0;
+
+    const clean = raw.replace(/[^0-9.\-]/g, '');
+    if (clean === '' || clean === '-' || clean === '.' || clean === '-.' || clean === '+.') return 0;
+
+    const n = Number.parseFloat(clean);
+    if (!Number.isFinite(n)) return 0;
+    return clamp(truncate2(n), -200, 100);
+  }
+
+  function money0(n) {
+    return '$' + Math.round(Math.abs(n)).toLocaleString('en-US');
+  }
+
+  function signed2(n) {
+    return (n < 0 ? '-$' : '$') + Math.abs(truncate2(n)).toFixed(2);
+  }
+
+  function derivePtPctFromProfitTaker(limit, profitTaker) {
+    if (limit === 0) return 0;
+    const pct = ((1 - (profitTaker / limit)) * 100);
+    return clamp(truncate2(pct), -200, 100);
+  }
+
+  function getLimitValueRaw(raw) {
+    const magnitudeText = String(raw).replace(/[^0-9.]/g, '');
+    let n = parseFloat(magnitudeText);
+    if (!Number.isFinite(n) || n === 0) n = 0.01;
+    return -Math.abs(n);
+  }
+
+  function getLimitValue() {
+    return getLimitValueRaw(limitEl.value);
+  }
+
+  function normalizeLimitOnBlur() {
+    if (limitEl.value.trim() === '') return null;
+    const n = getLimitValue();
+    limitEl.value = n.toFixed(2);
+    return n;
+  }
+
+  function computeMetrics(totalRaw, limitRaw, ptRaw) {
+    const totalMissing = String(totalRaw).trim() === '';
+    const limitMissing = String(limitRaw).trim() === '';
+    const ptMissing = String(ptRaw).trim() === '';
+
+    const total = totalMissing ? 0 : Math.max(0.01, Math.abs(number(totalRaw, 0)));
+    const limit = limitMissing ? 0 : getLimitValueRaw(limitRaw);
+    const ptPct = ptMissing ? 0 : sanitizePtPct(ptRaw);
+
+    const maxProfit = Math.abs(limit) * 100;
+    const maxLoss = Math.max(0, total - maxProfit);
+    const ratio = maxLoss > 0 ? (maxProfit / maxLoss) * 100 : 0;
+    const exactProfitTaker = limit * (1 - ptPct / 100);
+    const profitTaker = truncate2(exactProfitTaker);
+
+    const maxProfitMissing = limitMissing;
+    const maxLossMissing = totalMissing || limitMissing;
+    const ratioMissing = maxLossMissing;
+    const profitTakerMissing = limitMissing || ptMissing;
+    const fifthMissing = limitMissing || ptMissing;
+    const sideIsLoss = ptPct < 0;
+    const fifthValue = Math.round(maxProfit * (Math.abs(ptPct) / 100));
+
+    const ratios = [50, 55, 60, 65, 70, 75, 80];
+    const rows = ratios.map(r => {
+      const p = total * (r / (100 + r));
+      const l = total - p;
+      const rowLimit = -(p / 100);
+      const rowPt = rowLimit * (1 - ptPct / 100);
+      return { r, limit: rowLimit, pt: rowPt, profit: p, loss: l };
+    });
+
+    return {
+      total, limit, ptPct, maxProfit, maxLoss, ratio, profitTaker,
+      totalMissing, limitMissing, ptMissing,
+      maxProfitMissing, maxLossMissing, ratioMissing, profitTakerMissing,
+      fifthMissing, sideIsLoss, fifthValue, rows
+    };
+  }
+
+  function setMetric(id, missing, computeText, staticColorClass) {
+    const el = document.getElementById(id);
+    if (missing) {
+      el.textContent = 'Missing Value';
+      el.classList.add('missing');
+      if (staticColorClass) el.classList.remove(staticColorClass);
+    } else {
+      el.textContent = computeText();
+      el.classList.remove('missing');
+      if (staticColorClass) el.classList.add(staticColorClass);
+    }
+  }
+
+  function calculate() {
+    const state = computeMetrics(totalEl.value, limitEl.value, ptPctEl.value);
+
+    if (!state.totalMissing) totalEl.value = String(state.total);
+
+    setMetric('ratio', state.ratioMissing, () => `${truncate2(state.ratio)}`);
+    setMetric('maxProfit', state.maxProfitMissing, () => money0(state.maxProfit), 'green');
+    setMetric('maxLoss', state.maxLossMissing, () => money0(state.maxLoss), 'red');
+    setMetric('profitTaker', state.profitTakerMissing, () => formatTruncated2(state.profitTaker));
+
+    const sideIsLoss = state.sideIsLoss;
+    const stopTitle = document.getElementById('dynamicStopTitle');
+    const stopValue = document.getElementById('dynamicStopValue');
+    const stopIcon = document.getElementById('dynamicStopIcon');
+
+    if (state.fifthMissing) {
+      stopTitle.textContent = '';
+      stopValue.textContent = 'Missing Value';
+      stopValue.classList.remove('red', 'green');
+      stopValue.classList.add('missing');
+      stopIcon.textContent = '?';
+      stopIcon.classList.remove('green');
+      stopIcon.classList.add('red');
+    } else {
+      stopTitle.textContent = sideIsLoss ? 'LOSS' : 'PROFIT';
+      stopValue.textContent = '$' + Math.abs(state.fifthValue).toLocaleString('en-US');
+      stopValue.classList.remove('missing');
+      stopValue.classList.toggle('red', sideIsLoss);
+      stopValue.classList.toggle('green', !sideIsLoss);
+      stopIcon.textContent = sideIsLoss ? '↓' : '↑';
+      stopIcon.classList.toggle('red', sideIsLoss);
+      stopIcon.classList.toggle('green', !sideIsLoss);
+    }
+
+    renderChart(state.maxLoss, state.maxProfit);
+    renderTable(state.ptPct, state.profitTakerMissing, state.rows);
+  }
+
+  function renderChart(loss, profit) {
+    const max = Math.max(loss, profit, 1);
+    const ceiling = Math.ceil(max / 200) * 200 || 200;
+    const lossBar = document.getElementById('lossBar');
+    const profitBar = document.getElementById('profitBar');
+
+    lossBar.style.width = Math.max(10, loss / ceiling * 100) + '%';
+    profitBar.style.width = Math.max(10, profit / ceiling * 100) + '%';
+    lossBar.textContent = money0(loss);
+    profitBar.textContent = money0(profit);
+
+    const step = ceiling / 4;
+    const scale = document.getElementById('scale');
+    scale.innerHTML = [0, 1, 2, 3, 4]
+      .map(i => `<span>${Math.round(step * i).toLocaleString('en-US')}</span>`)
+      .join('');
+  }
+
+  function renderTable(ptPct, ptPctMissing, rows) {
+    const ptHeader = document.getElementById('ptHeader');
+    ptHeader.textContent = ptPctMissing ? 'PT' : `PT (${truncate2(ptPct)}%)`;
+
+    const tbody = document.getElementById('rows');
+    tbody.innerHTML = rows.map(row => `<tr>
+        <td>${row.r}%</td>
+        <td>${row.limit.toFixed(2)}</td>
+        <td>${signed2(row.pt)}</td>
+        <td>${money0(row.profit)}</td>
+        <td>${money0(row.loss)}</td>
+      </tr>`).join('');
+  }
+
+  /* ---------- calculator inputs ---------- */
+  totalEl.addEventListener('input', calculate);
+  totalEl.addEventListener('change', calculate);
+  totalEl.addEventListener('blur', calculate);
+
+  ptPctEl.addEventListener('input', () => {
+    const value = ptPctEl.value;
+    if (value === '') {
+      calculate();
+      return;
+    }
+    if (value === '-' || value === '.' || value === '-.' || value === '+.') return;
+    const numeric = Number.parseFloat(value.replace(/[^0-9.\-]/g, ''));
+    if (!Number.isFinite(numeric)) {
+      ptPctEl.value = '';
+      return;
+    }
+    const clamped = clamp(sanitizePtPct(value), -200, 100);
+    if (Math.abs(clamped) < 0.01 && value !== '0' && value !== '0.' && value !== '-0' && value !== '-0.') {
+      return;
+    }
+    calculate();
+  });
+
+  let ptPctFocusValue = null;
+
+  ptPctEl.addEventListener('focus', () => {
+    ptPctFocusValue = ptPctEl.value;
+  });
+
+  function commitPtPct() {
+    const current = ptPctEl.value;
+    const unchanged = ptPctFocusValue !== null && current === ptPctFocusValue;
+    ptPctFocusValue = null;
+
+    if (unchanged) return;
+
+    if (current.trim() === '') {
+      calculate();
+      return;
+    }
+
+    const normalized = sanitizePtPct(current);
+    const limit = getLimitValue();
+    const exactProfitTaker = limit * (1 - normalized / 100);
+    const profitTaker = truncate2(exactProfitTaker);
+    const synced = derivePtPctFromProfitTaker(limit, profitTaker);
+    ptPctEl.value = formatTruncated2(synced);
+    calculate();
+  }
+
+  ptPctEl.addEventListener('blur', commitPtPct);
+
+  ptPctEl.addEventListener('keydown', e => {
+    if (e.key === 'Enter') {
+      ptPctEl.blur();
+    }
+  });
+
+  limitEl.addEventListener('input', calculate);
+
+  limitEl.addEventListener('blur', () => {
+    normalizeLimitOnBlur();
+    calculate();
+  });
+
+  limitEl.addEventListener('change', () => {
+    normalizeLimitOnBlur();
+    calculate();
+  });
+
+  limitEl.addEventListener('keydown', e => {
+    if (e.key === 'Enter') {
+      normalizeLimitOnBlur();
+      calculate();
+      limitEl.blur();
+    }
+  });
+
+  calculate();
+
+  /* ===================================================================
+   * MODE TOGGLE
+   * =================================================================== */
+  let currentMode = 'calculator';
+
+  function setMode(mode) {
+    currentMode = mode;
+    // #portfolioView is `display:none` by default in the stylesheet, so
+    // clearing the inline style (style.display = '') falls back to that
+    // rule instead of showing it -- must set an explicit visible value.
+    document.getElementById('calculatorView').style.display = mode === 'calculator' ? 'block' : 'none';
+    document.getElementById('portfolioView').style.display = mode === 'portfolio' ? 'block' : 'none';
+    const btn = document.getElementById('modeToggleBtn');
+    if (mode === 'calculator') {
+      btn.innerHTML = '&#x1F4C1;';
+      btn.title = 'Switch to Portfolio Mode';
+      btn.onclick = () => setMode('portfolio');
+    } else {
+      btn.innerHTML = '&#x1F9EE;';
+      btn.title = 'Switch to Calculator Mode';
+      btn.onclick = () => setMode('calculator');
+      renderPortfolio();
+    }
+  }
+
+  /* ===================================================================
+   * PORTFOLIO / DEALS
+   * =================================================================== */
+  let deals = [];
+  let closingDealId = null;
+  let editingDealId = null;   // null while adding a NEW deal, set while editing
+  let dealFormMode = 'simple'; // 'simple' | 'advanced' — controls the save/edit modal
+
+  function escapeHtml(s) {
+    return String(s).replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
+  }
+
+  function newDealId() {
+    return 'd' + Date.now().toString(36) + Math.random().toString(36).slice(2, 8);
+  }
+
+  function todayStr() {
+    return new Date().toISOString().slice(0, 10);
+  }
+
+  function addDaysStr(dateStr, days) {
+    const base = dateStr ? new Date(dateStr + 'T00:00:00') : new Date();
+    base.setDate(base.getDate() + days);
+    return base.toISOString().slice(0, 10);
+  }
+
+  /* ---------- month/day date pickers (no year field) ----------
+   * The year is inferred: this year, unless that month/day has already
+   * passed, in which case it rolls to next year -- mirrors the Python build. */
+  function fillMonthSelect(sel) {
+    sel.innerHTML = Array.from({ length: 12 }, (_, i) => `<option value="${i + 1}">${String(i + 1).padStart(2, '0')}</option>`).join('');
+  }
+
+  function fillDaySelect(sel) {
+    sel.innerHTML = Array.from({ length: 31 }, (_, i) => `<option value="${i + 1}">${String(i + 1).padStart(2, '0')}</option>`).join('');
+  }
+
+  function resolveYearForMonthDay(month, day, today) {
+    today = today || new Date();
+    const todayMid = new Date(today.getFullYear(), today.getMonth(), today.getDate());
+    const candidate = new Date(today.getFullYear(), month - 1, day);
+    return candidate < todayMid ? today.getFullYear() + 1 : today.getFullYear();
+  }
+
+  function composeDateMD(monthSel, daySel) {
+    const m = parseInt(monthSel.value, 10);
+    const d = parseInt(daySel.value, 10);
+    if (!m || !d) return '';
+    const y = resolveYearForMonthDay(m, d);
+    return `${y}-${String(m).padStart(2, '0')}-${String(d).padStart(2, '0')}`;
+  }
+
+  function setMonthDayFromDateStr(monthSel, daySel, dateStr) {
+    const d = dateStr ? new Date(dateStr + 'T00:00:00') : new Date();
+    monthSel.value = String(d.getMonth() + 1);
+    daySel.value = String(d.getDate());
+  }
+
+  function applyDateToPair(mId, dId, pId, dateStr) {
+    const mSel = document.getElementById(mId);
+    const dSel = document.getElementById(dId);
+    setMonthDayFromDateStr(mSel, dSel, dateStr);
+    document.getElementById(pId).textContent = composeDateMD(mSel, dSel);
+  }
+
+  [
+    ['sdStartMonth', 'sdStartDay', 'sdStartPreview'],
+    ['sdExpiryMonth', 'sdExpiryDay', 'sdExpiryPreview'],
+    ['cdDateMonth', 'cdDateDay', 'cdDatePreview']
+  ].forEach(([mId, dId, pId]) => {
+    const mSel = document.getElementById(mId);
+    const dSel = document.getElementById(dId);
+    fillMonthSelect(mSel);
+    fillDaySelect(dSel);
+    const refresh = () => { document.getElementById(pId).textContent = composeDateMD(mSel, dSel); };
+    mSel.addEventListener('change', refresh);
+    dSel.addEventListener('change', refresh);
+  });
+
+  function finalStats(deal) {
+    const m = computeMetrics(deal.total, deal.limit, deal.ptPct);
+    const limit = m.limit;
+    const exitVal = truncate2(number(deal.exitValue, 0));
+    const finalPtPct = derivePtPctFromProfitTaker(limit, exitVal);
+    const finalAmount = Math.round(m.maxProfit * (Math.abs(finalPtPct) / 100));
+    return { exitVal, finalPtPct, finalAmount, finalSideLoss: finalPtPct < 0, maxProfit: m.maxProfit };
+  }
+
+  function dealCardHtml(deal) {
+    const m = computeMetrics(deal.total, deal.limit, deal.ptPct);
+    const badge = deal.closed
+      ? `<span class="badge badge-closed">CLOSED</span>`
+      : `<span class="badge badge-open">OPEN</span>`;
+    const tickerHtml = deal.ticker ? `<span class="deal-ticker">${escapeHtml(deal.ticker)}</span>` : '';
+    const titleHtml = `<span class="deal-title-text">${escapeHtml(deal.name)}</span>`;
+
+    let finalBlock = '';
+    if (deal.closed) {
+      const f = finalStats(deal);
+      const sideLabel = f.finalSideLoss ? 'LOSS' : 'PROFIT';
+      const sideClass = f.finalSideLoss ? 'red' : 'green';
+      finalBlock = `
+        <div class="deal-final">
+          <div class="deal-final-row"><span>Closed</span><span>${escapeHtml(deal.closeDate || '—')}</span></div>
+          <div class="deal-final-row"><span>Exit Value</span><span>${signed2(f.exitVal)}</span></div>
+          <div class="deal-final-row"><span>Final PT %</span><span>${truncate2(f.finalPtPct)}%</span></div>
+          <div class="deal-final-row"><span>Final ${sideLabel}</span><span class="${sideClass}">$${f.finalAmount.toLocaleString('en-US')}</span></div>
+        </div>`;
+    }
+
+    return `
+      <div class="panel deal-card">
+        <div class="deal-card-head">
+          <div>
+            <div class="deal-name">${tickerHtml} ${titleHtml} ${badge}</div>
+            <div class="deal-sub">${escapeHtml(deal.spreadType || '')}</div>
+          </div>
+        </div>
+        <div class="deal-dates">${escapeHtml(deal.startDate || '—')} &rarr; ${escapeHtml(deal.expiryDate || '—')}</div>
+        <div class="deal-legs">
+          <span>Short Leg <b>$${escapeHtml(deal.shortStrike || '—')}</b></span>
+          <span>Long Leg <b>$${escapeHtml(deal.longStrike || '—')}</b></span>
+        </div>
+        <div class="deal-metrics">
+          <div><span>RATIO</span><b class="blue">${truncate2(m.ratio)}%</b></div>
+          <div><span>MAX PROFIT</span><b class="green">${money0(m.maxProfit)}</b></div>
+          <div><span>MAX LOSS</span><b class="red">${money0(m.maxLoss)}</b></div>
+          <div><span>PT %</span><b class="blue">${truncate2(m.ptPct)}%</b></div>
+          <div><span>PT VALUE</span><b class="blue">${formatTruncated2(m.profitTaker)}</b></div>
+          <div><span>${m.sideIsLoss ? 'LOSS' : 'PROFIT'}</span><b class="${m.sideIsLoss ? 'red' : 'green'}">$${Math.abs(m.fifthValue).toLocaleString('en-US')}</b></div>
+        </div>
+        ${finalBlock}
+        <div class="deal-actions">
+          ${deal.closed ? '' : `<button type="button" class="btn btn-secondary" onclick="openCloseModal('${deal.id}')">Close Deal</button>`}
+          <button type="button" class="btn btn-secondary" onclick="openEditModal('${deal.id}')">Edit</button>
+          <button type="button" class="btn btn-danger" onclick="deleteDeal('${deal.id}')">Delete</button>
+        </div>
+      </div>`;
+  }
+
+  function renderPortfolio() {
+    const grid = document.getElementById('dealGrid');
+    const empty = document.getElementById('portfolioEmpty');
+    const count = document.getElementById('dealCount');
+    count.textContent = deals.length ? `(${deals.length} deal${deals.length === 1 ? '' : 's'})` : '';
+
+    if (deals.length === 0) {
+      grid.innerHTML = '';
+      empty.style.display = '';
+      return;
+    }
+    empty.style.display = 'none';
+    grid.innerHTML = deals
+      .slice()
+      .sort((a, b) => (b.createdTs || 0) - (a.createdTs || 0))
+      .map(dealCardHtml)
+      .join('');
+  }
+
+  /* ---------- save/edit deal modal (shared) ---------- */
+  function applyFormMode() {
+    const adv = document.getElementById('sdAdvanced');
+    const btn = document.getElementById('sdModeBtn');
+    if (dealFormMode === 'simple') {
+      adv.classList.add('adv-hidden');
+      btn.innerHTML = '&#x2728; Simple';
+    } else {
+      adv.classList.remove('adv-hidden');
+      btn.innerHTML = '&#x1F6E0; Advanced';
+    }
+  }
+
+  function toggleFormMode() {
+    dealFormMode = dealFormMode === 'simple' ? 'advanced' : 'simple';
+    applyFormMode();
+  }
+
+  function openSaveModal() {
+    editingDealId = null;
+    document.getElementById('modalTitle').textContent = 'Save Deal';
+    document.getElementById('sdSubmitBtn').textContent = 'Save Deal';
+
+    document.getElementById('sdTicker').value = '';
+    document.getElementById('sdName').value = '';
+    document.getElementById('sdSpreadType').value = 'Bull Put Spread';
+    document.getElementById('sdShort').value = '';
+    document.getElementById('sdLong').value = '';
+    document.getElementById('sdTotal').value = totalEl.value;
+    document.getElementById('sdLimit').value = limitEl.value;
+    document.getElementById('sdPt').value = ptPctEl.value;
+    const start = todayStr();
+    applyDateToPair('sdStartMonth', 'sdStartDay', 'sdStartPreview', start);
+    applyDateToPair('sdExpiryMonth', 'sdExpiryDay', 'sdExpiryPreview', addDaysStr(start, 30));
+
+    dealFormMode = 'simple';
+    applyFormMode();
+
+    document.getElementById('saveDealModal').classList.remove('hidden');
+    document.getElementById('sdTicker').focus();
+  }
+
+  function openEditModal(id) {
+    const deal = deals.find(d => d.id === id);
+    if (!deal) return;
+    editingDealId = id;
+    document.getElementById('modalTitle').textContent = 'Edit Deal';
+    document.getElementById('sdSubmitBtn').textContent = 'Save Changes';
+
+    document.getElementById('sdTicker').value = deal.ticker || '';
+    document.getElementById('sdName').value = deal.name || '';
+    document.getElementById('sdSpreadType').value = deal.spreadType || 'Bull Put Spread';
+    document.getElementById('sdShort').value = deal.shortStrike || '';
+    document.getElementById('sdLong').value = deal.longStrike || '';
+    applyDateToPair('sdStartMonth', 'sdStartDay', 'sdStartPreview', deal.startDate || todayStr());
+    applyDateToPair('sdExpiryMonth', 'sdExpiryDay', 'sdExpiryPreview', deal.expiryDate || addDaysStr(deal.startDate, 30));
+    document.getElementById('sdTotal').value = deal.total || '';
+    document.getElementById('sdLimit').value = deal.limit || '';
+    document.getElementById('sdPt').value = deal.ptPct || '';
+
+    dealFormMode = 'simple';
+    applyFormMode();
+
+    document.getElementById('saveDealModal').classList.remove('hidden');
+  }
+
+  function closeSaveModal() {
+    document.getElementById('saveDealModal').classList.add('hidden');
+  }
+
+  function submitSaveDeal(e) {
+    e.preventDefault();
+    const ticker = document.getElementById('sdTicker').value.trim().toUpperCase();
+    const name = document.getElementById('sdName').value.trim();
+    if (!ticker && !name) { alert('Please enter a Ticker or a Title for this deal.'); return; }
+
+    const payload = {
+      ticker,
+      name: name || ticker,
+      spreadType: document.getElementById('sdSpreadType').value,
+      shortStrike: document.getElementById('sdShort').value.trim(),
+      longStrike: document.getElementById('sdLong').value.trim(),
+      total: document.getElementById('sdTotal').value.trim(),
+      limit: document.getElementById('sdLimit').value.trim(),
+      ptPct: document.getElementById('sdPt').value.trim(),
+      startDate: composeDateMD(document.getElementById('sdStartMonth'), document.getElementById('sdStartDay')),
+      expiryDate: composeDateMD(document.getElementById('sdExpiryMonth'), document.getElementById('sdExpiryDay'))
+    };
+
+    if (editingDealId) {
+      const deal = deals.find(d => d.id === editingDealId);
+      if (deal) Object.assign(deal, payload);
+    } else {
+      deals.push(Object.assign({
+        id: newDealId(),
+        createdTs: Date.now(),
+        closed: false,
+        closeDate: '',
+        exitValue: ''
+      }, payload));
+    }
+
+    closeSaveModal();
+    setMode('portfolio');
+  }
+
+  /* ---------- close deal modal ---------- */
+  function openCloseModal(id) {
+    const deal = deals.find(d => d.id === id);
+    if (!deal) return;
+    closingDealId = id;
+    document.getElementById('cdDealName').textContent = deal.name;
+    applyDateToPair('cdDateMonth', 'cdDateDay', 'cdDatePreview', todayStr());
+    document.getElementById('cdExit').value = '';
+    document.getElementById('closeDealModal').classList.remove('hidden');
+    document.getElementById('cdExit').focus();
+  }
+
+  function closeCloseModal() {
+    document.getElementById('closeDealModal').classList.add('hidden');
+    closingDealId = null;
+  }
+
+  function submitCloseDeal(e) {
+    e.preventDefault();
+    const deal = deals.find(d => d.id === closingDealId);
+    if (!deal) return;
+    const exitRaw = document.getElementById('cdExit').value.trim();
+    if (exitRaw === '') { alert('Enter the exit value.'); return; }
+
+    deal.closed = true;
+    deal.closeDate = composeDateMD(document.getElementById('cdDateMonth'), document.getElementById('cdDateDay'));
+    deal.exitValue = exitRaw;
+
+    closeCloseModal();
+    renderPortfolio();
+  }
+
+  function deleteDeal(id) {
+    if (!confirm('Delete this deal permanently?')) return;
+    deals = deals.filter(d => d.id !== id);
+    renderPortfolio();
+  }
+
+  /* ---------- import / export ---------- */
+  function exportDeals() {
+    const blob = new Blob([JSON.stringify({ version: 1, exportedAt: new Date().toISOString(), deals }, null, 2)], { type: 'application/json' });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = 'options-portfolio.json';
+    document.body.appendChild(a);
+    a.click();
+    a.remove();
+    URL.revokeObjectURL(url);
+  }
+
+  function importDealsFile(evt) {
+    const file = evt.target.files[0];
+    if (!file) return;
+    const reader = new FileReader();
+    reader.onload = () => {
+      try {
+        const parsed = JSON.parse(reader.result);
+        const incoming = Array.isArray(parsed) ? parsed : (Array.isArray(parsed.deals) ? parsed.deals : null);
+        if (!incoming) throw new Error('bad format');
+
+        const existingIds = new Set(deals.map(d => d.id));
+        incoming.forEach(d => {
+          if (!d || typeof d !== 'object' || !(d.name || d.ticker)) return;
+          if (!d.id || existingIds.has(d.id)) d.id = newDealId();
+          if (!d.createdTs) d.createdTs = Date.now();
+          existingIds.add(d.id);
+          deals.push(d);
+        });
+        renderPortfolio();
+      } catch (err) {
+        alert('Could not read that file — make sure it is a portfolio export from this app.');
+      }
+      evt.target.value = '';
+    };
+    reader.readAsText(file);
+  }
+</script>
+</body>
+</html>
